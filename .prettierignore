@@ -1,0 +1,4 @@
+DESIGN.md
+package-lock.json
+**/dist/
+coverage/

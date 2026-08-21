@@ -2,30 +2,34 @@
 
 ## Project Structure & Module Organization
 
-This repository is in the design phase. `DESIGN.md` is the authoritative product and architecture specification; no source, tests, or assets exist yet. The planned system has a TypeScript/Node daemon, Vite/React SPA, shared types, GitHub integration, and isolated Claude/Codex adapters. Keep those boundaries visible in the initial layout, and update `DESIGN.md` when implementation changes an architectural decision.
+This npm workspace separates runnable applications from reusable code. `apps/daemon` contains the Node daemon, `apps/web` contains the Vite/React SPA, and `packages/shared` contains browser-safe shared types and protocols. Tests live beside source as `*.test.ts` or `*.test.tsx`. Generated output belongs in each workspace's `dist/`. `DESIGN.md` remains the authoritative product and architecture specification; update it when implementation changes a documented decision.
 
 ## Build, Test, and Development Commands
 
-There is no `package.json`, build pipeline, or test runner yet. For documentation-only changes, run:
+Use Node 24 (`nvm use`) and install the locked dependencies with `npm ci`. Key root commands are:
 
 ```bash
-git diff --check       # detect whitespace errors
-git status --short     # confirm the intended files changed
+npm run dev           # watch shared/daemon code and run Vite
+npm run build         # build shared, daemon, then web
+npm test              # run Vitest once
+npm run lint          # run ESLint with zero warnings
+npm run format:check  # verify Prettier formatting
+npm run check         # run every CI validation
 ```
 
-When introducing the Node toolchain, provide `dev`, `test`, `lint`, and `build` scripts and document them in the same pull request. The eventual CLI should expose `legible`, `legible pr <number>`, and `legible add <path>`.
+Run workspace-specific commands with `npm run <script> --workspace @legible/<name>`. The eventual CLI will expose `legible`, `legible pr <number>`, and `legible add <path>`.
 
 ## Coding Style & Naming Conventions
 
-Follow the TypeScript examples in `DESIGN.md`: two-space indentation, single quotes, `PascalCase` for types and React components, and `camelCase` for variables, functions, and fields. Keep vendor schemas inside adapters; core code should use normalized interfaces. Use lowercase `legible` for commands, packages, identifiers, and paths; use `Legible` in prose. No formatter or linter is configured, so document one when adding it.
+Use two-space indentation, single quotes, and no semicolons; Prettier owns formatting. ESLint and strict TypeScript must pass without warnings. Use `PascalCase` for types and React components and `camelCase` for variables, functions, and fields. Keep vendor schemas inside adapters and expose normalized interfaces to core code. Use lowercase `legible` for commands, packages, identifiers, and paths; use `Legible` in prose.
 
 ## Testing Guidelines
 
-No framework or coverage threshold has been selected. New executable code should include automated tests. Prioritize diff line/side accounting, path normalization, worktree cleanup, persistence, adapter event normalization, and stale GitHub comment anchors. Name tests after observable behavior, keep fixtures small, and expose the full suite through `npm test`.
+Vitest is the test runner. New behavior must include focused tests named after observable outcomes. Prioritize diff line/side accounting, path normalization, worktree cleanup, persistence, adapter event normalization, and stale GitHub comment anchors. Keep fixtures small and deterministic. There is no coverage threshold yet; do not use that as a reason to leave critical branches untested.
 
 ## Commit & Pull Request Guidelines
 
-Recent history favors short, imperative subjects; use Conventional Commit prefixes where useful, for example `docs: clarify worktree lifecycle` or `feat: parse unified diffs`. Keep commits focused. Pull requests should explain the user-visible outcome, call out deviations from `DESIGN.md`, list verification performed, and link relevant issues. Include screenshots for web UI changes and sample diff fixtures for parser changes.
+Use short, imperative Conventional Commit subjects, for example `docs: clarify worktree lifecycle` or `feat: parse unified diffs`. Keep commits focused. Pull requests should explain the user-visible outcome, call out deviations from `DESIGN.md`, list verification performed, and link relevant issues. Include screenshots for web UI changes and sample fixtures for parser changes.
 
 ## Security & Configuration
 
