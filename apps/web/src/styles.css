@@ -671,6 +671,80 @@ button {
   background-color: rgba(64, 129, 190, 0.22);
 }
 
+.cm-inline-comment-widget {
+  padding: 8px 14px 10px 58px;
+  border-top: 1px solid #33475e;
+  border-bottom: 1px solid #33475e;
+  background: #101b28;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+.inline-comment-form,
+.draft-comment-card {
+  display: grid;
+  gap: 8px;
+  max-width: 720px;
+  padding: 10px;
+  border: 1px solid #3b516a;
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--surface-1);
+  font-size: 12px;
+}
+
+.inline-comment-form textarea,
+.draft-comment-card textarea {
+  min-height: 72px;
+  resize: vertical;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: none;
+  color: var(--text);
+  background: var(--surface-0);
+  font: inherit;
+}
+
+.inline-comment-form > div,
+.draft-comment-card footer,
+.draft-comment-card header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.draft-comment-card header {
+  justify-content: space-between;
+  color: var(--muted);
+}
+
+.draft-comment-card header strong {
+  color: var(--accent);
+  text-transform: capitalize;
+}
+
+.draft-comment-card p {
+  margin: 0;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.inline-comment-form button,
+.draft-comment-card button {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--surface-3);
+  cursor: pointer;
+}
+
+.inline-comment-error {
+  color: #ffc0c4;
+  font-size: 11px;
+}
+
 @media (max-width: 760px) {
   .review-shell {
     grid-template-rows: auto minmax(0, 1fr);

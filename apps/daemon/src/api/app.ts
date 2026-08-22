@@ -16,6 +16,11 @@ import {
   ChatUnavailableError,
   InvalidChatMessageError,
 } from '../chats/service.js'
+import {
+  CommentNotFoundError,
+  CommentSessionNotFoundError,
+  InvalidCommentError,
+} from '../comments/service.js'
 import { ReviewFileNotFoundError, ReviewFileUnavailableError } from '../diffs/file-service.js'
 import { DiffUnavailableError } from '../diffs/service.js'
 import type { DaemonServices } from '../services.js'
@@ -51,6 +56,63 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   app.post('/api/preflight/refresh', async () => options.services.preflight.refresh())
 
   app.get('/api/sessions', async () => options.services.sessions.list())
+
+  app.get<{ Params: { sessionId: string } }>('/api/sessions/:sessionId/comments', (request) =>
+    options.services.comments.list(request.params.sessionId),
+  )
+
+  app.post<{
+    Params: { sessionId: string }
+    Body: {
+      path?: unknown
+      line?: unknown
+      side?: unknown
+      startLine?: unknown
+      startSide?: unknown
+      body?: unknown
+    }
+  }>('/api/sessions/:sessionId/comments', async (request, reply) => {
+    const body = request.body
+    if (
+      typeof body?.path !== 'string' ||
+      typeof body.line !== 'number' ||
+      (body.side !== 'LEFT' && body.side !== 'RIGHT') ||
+      typeof body.body !== 'string' ||
+      (body.startLine !== undefined && typeof body.startLine !== 'number') ||
+      (body.startSide !== undefined && body.startSide !== 'LEFT' && body.startSide !== 'RIGHT')
+    ) {
+      throw new InvalidCommentError('A valid comment body and anchor are required')
+    }
+    const comment = await options.services.comments.create(request.params.sessionId, {
+      path: body.path,
+      line: body.line,
+      side: body.side,
+      ...(body.startLine !== undefined ? { startLine: body.startLine } : {}),
+      ...(body.startSide !== undefined ? { startSide: body.startSide } : {}),
+      body: body.body,
+    })
+    return reply.code(201).send(comment)
+  })
+
+  app.patch<{
+    Params: { sessionId: string; commentId: string }
+    Body: { body?: unknown }
+  }>('/api/sessions/:sessionId/comments/:commentId', async (request) => {
+    if (typeof request.body?.body !== 'string') {
+      throw new InvalidCommentError('A comment body is required')
+    }
+    return options.services.comments.update(request.params.sessionId, request.params.commentId, {
+      body: request.body.body,
+    })
+  })
+
+  app.delete<{ Params: { sessionId: string; commentId: string } }>(
+    '/api/sessions/:sessionId/comments/:commentId',
+    async (request, reply) => {
+      await options.services.comments.remove(request.params.sessionId, request.params.commentId)
+      return reply.code(204).send()
+    },
+  )
 
   app.get<{ Params: { sessionId: string } }>('/api/sessions/:sessionId/chat', (request) =>
     options.services.chats.get(request.params.sessionId),
@@ -163,7 +225,13 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     socket.once('error', unsubscribe)
   })
 
-  app.addHook('onClose', async () => options.services.chats.close())
+  app.addHook('onClose', async () => {
+    try {
+      await options.services.persistence.close()
+    } finally {
+      await options.services.chats.close()
+    }
+  })
 
   app.setNotFoundHandler(async (_request, reply) => {
     const response: ApiError = {
@@ -173,6 +241,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   })
 
   app.setErrorHandler(async (error, request, reply) => {
+    const commentError = mapCommentError(error)
+    if (commentError) return reply.code(commentError.status).send(commentError.body)
     const chatError = mapChatError(error)
     if (chatError) return reply.code(chatError.status).send(chatError.body)
     request.log.error(error)
@@ -183,6 +253,28 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   })
 
   return app
+}
+
+function mapCommentError(error: unknown): { status: 400 | 404; body: ApiError } | undefined {
+  if (error instanceof CommentSessionNotFoundError) {
+    return {
+      status: 404,
+      body: { error: { code: 'session_not_found', message: error.message } },
+    }
+  }
+  if (error instanceof CommentNotFoundError) {
+    return {
+      status: 404,
+      body: { error: { code: 'comment_not_found', message: error.message } },
+    }
+  }
+  if (error instanceof InvalidCommentError) {
+    return {
+      status: 400,
+      body: { error: { code: 'invalid_comment', message: error.message } },
+    }
+  }
+  return undefined
 }
 
 function mapChatError(error: unknown): { status: 400 | 404 | 409; body: ApiError } | undefined {

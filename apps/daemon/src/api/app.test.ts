@@ -1,6 +1,9 @@
 import type { DaemonEventEnvelope, PreflightReport } from '@legible/protocol'
 import type { FastifyInstance } from 'fastify'
 import type { WebSocket } from 'ws'
+import { mkdtemp } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { createSnapshotEvent } from './app.js'
@@ -339,6 +342,38 @@ describe('daemon API', () => {
     })
     socket.terminate()
   })
+
+  it('creates, edits, lists, and deletes persisted draft comments', async () => {
+    const runtime = await makeRuntime(new ReadyCommandRunner(), diffSourceFrom(exampleDiff))
+    runtime.services.sessions.add(
+      reviewSession({ baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40) }),
+    )
+
+    const created = await runtime.app.inject({
+      method: 'POST',
+      url: '/api/sessions/session-1/comments',
+      payload: { path: 'example.ts', line: 1, side: 'RIGHT', body: 'Draft' },
+    })
+    expect(created.statusCode).toBe(201)
+    expect(created.json()).toMatchObject({ origin: 'human', body: 'Draft' })
+    const id = created.json<{ id: string }>().id
+
+    const edited = await runtime.app.inject({
+      method: 'PATCH',
+      url: `/api/sessions/session-1/comments/${id}`,
+      payload: { body: 'Updated draft' },
+    })
+    expect(edited.json()).toMatchObject({ body: 'Updated draft' })
+    expect(
+      (await runtime.app.inject({ method: 'GET', url: '/api/sessions/session-1/comments' })).json(),
+    ).toEqual([expect.objectContaining({ id, body: 'Updated draft' })])
+
+    const removed = await runtime.app.inject({
+      method: 'DELETE',
+      url: `/api/sessions/session-1/comments/${id}`,
+    })
+    expect(removed.statusCode).toBe(204)
+  })
 })
 
 async function makeRuntime(
@@ -347,6 +382,7 @@ async function makeRuntime(
   fileSource?: FileSource,
   codexBackend?: AgentBackend,
 ) {
+  const stateDirectory = await mkdtemp(join(tmpdir(), 'legible-api-'))
   const runtime = await createDaemon({
     version: '1.2.3',
     repoPath: '/repo',
@@ -354,6 +390,7 @@ async function makeRuntime(
     ...(diffSource ? { diffSource } : {}),
     ...(fileSource ? { fileSource } : {}),
     ...(codexBackend ? { codexBackend } : {}),
+    stateDirectory,
     now: () => new Date('2026-08-21T03:00:00.000Z'),
   })
   runtimes.push(runtime)

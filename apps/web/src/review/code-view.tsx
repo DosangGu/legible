@@ -1,6 +1,7 @@
 import { Compartment, EditorState, type Extension, type Range } from '@codemirror/state'
-import { Decoration, EditorView, GutterMarker, gutter } from '@codemirror/view'
-import { useEffect, useRef } from 'react'
+import { Decoration, EditorView, GutterMarker, WidgetType, gutter } from '@codemirror/view'
+import { useEffect, useRef, type ReactNode } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
 
 import type { DiffAnchor, RenderModel } from './render-model.js'
 import { sameAnchor } from './render-model.js'
@@ -10,20 +11,33 @@ export type ScrollRequest = {
   nonce: number
 }
 
+export type InlineWidget = {
+  id: string
+  anchor: DiffAnchor
+  content: ReactNode
+}
+
+export type AnchorRange = { start: DiffAnchor; end: DiffAnchor }
+
 export function CodeView({
   model,
   selectedAnchor,
+  selectedRange,
   onAnchorSelect,
   scrollRequest,
+  inlineWidgets = [],
 }: {
   model: RenderModel
   selectedAnchor?: DiffAnchor | undefined
-  onAnchorSelect: (anchor: DiffAnchor) => void
+  selectedRange?: AnchorRange | undefined
+  onAnchorSelect: (anchor: DiffAnchor, extend: boolean) => void
   scrollRequest?: ScrollRequest | undefined
+  inlineWidgets?: InlineWidget[] | undefined
 }) {
   const parent = useRef<HTMLDivElement>(null)
   const view = useRef<EditorView>(null)
   const selection = useRef(new Compartment())
+  const widgets = useRef(new Compartment())
   const onAnchorSelectRef = useRef(onAnchorSelect)
 
   useEffect(() => {
@@ -41,9 +55,14 @@ export function CodeView({
           EditorView.editable.of(false),
           EditorView.contentAttributes.of({ 'aria-label': 'Review diff' }),
           lineDecorations(model),
-          anchorGutter('LEFT', model, (anchor) => onAnchorSelectRef.current(anchor)),
-          anchorGutter('RIGHT', model, (anchor) => onAnchorSelectRef.current(anchor)),
+          anchorGutter('LEFT', model, (anchor, extend) =>
+            onAnchorSelectRef.current(anchor, extend),
+          ),
+          anchorGutter('RIGHT', model, (anchor, extend) =>
+            onAnchorSelectRef.current(anchor, extend),
+          ),
           selection.current.of([]),
+          widgets.current.of([]),
           EditorView.theme({
             '&': { height: '100%' },
             '.cm-scroller': { overflow: 'auto' },
@@ -79,9 +98,23 @@ export function CodeView({
     const editor = view.current
     if (!editor) return
     editor.dispatch({
-      effects: selection.current.reconfigure(selectionDecoration(model, selectedAnchor)),
+      effects: widgets.current.reconfigure(inlineDecorations(model, inlineWidgets)),
     })
-  }, [model, selectedAnchor])
+  }, [inlineWidgets, model])
+
+  useEffect(() => {
+    const editor = view.current
+    if (!editor) return
+    editor.dispatch({
+      effects: selection.current.reconfigure(
+        selectionDecoration(
+          model,
+          selectedRange ??
+            (selectedAnchor ? { start: selectedAnchor, end: selectedAnchor } : undefined),
+        ),
+      ),
+    })
+  }, [model, selectedAnchor, selectedRange])
 
   useEffect(() => {
     const editor = view.current
@@ -98,7 +131,7 @@ export function CodeView({
 class AnchorMarker extends GutterMarker {
   constructor(
     readonly anchor: DiffAnchor,
-    readonly onSelect: (anchor: DiffAnchor) => void,
+    readonly onSelect: (anchor: DiffAnchor, extend: boolean) => void,
   ) {
     super()
   }
@@ -113,7 +146,7 @@ class AnchorMarker extends GutterMarker {
     button.addEventListener('click', (event) => {
       event.preventDefault()
       event.stopPropagation()
-      this.onSelect(this.anchor)
+      this.onSelect(this.anchor, event.shiftKey)
     })
     return button
   }
@@ -122,7 +155,7 @@ class AnchorMarker extends GutterMarker {
 function anchorGutter(
   side: 'LEFT' | 'RIGHT',
   model: RenderModel,
-  onSelect: (anchor: DiffAnchor) => void,
+  onSelect: (anchor: DiffAnchor, extend: boolean) => void,
 ): Extension {
   return gutter({
     class: side === 'LEFT' ? 'cm-left-gutter' : 'cm-right-gutter',
@@ -132,6 +165,67 @@ function anchorGutter(
       return anchor ? new AnchorMarker(anchor, onSelect) : null
     },
   })
+}
+
+const widgetRoots = new WeakMap<HTMLElement, Root>()
+
+class ReactInlineWidget extends WidgetType {
+  constructor(
+    readonly id: string,
+    readonly content: ReactNode,
+  ) {
+    super()
+  }
+
+  override toDOM(): HTMLElement {
+    const container = document.createElement('div')
+    container.className = 'cm-inline-comment-widget'
+    const root = createRoot(container)
+    widgetRoots.set(container, root)
+    root.render(this.content)
+    return container
+  }
+
+  override updateDOM(dom: HTMLElement): boolean {
+    const root = widgetRoots.get(dom)
+    if (!root) return false
+    root.render(this.content)
+    return true
+  }
+
+  override destroy(dom: HTMLElement): void {
+    const root = widgetRoots.get(dom)
+    widgetRoots.delete(dom)
+    queueMicrotask(() => root?.unmount())
+  }
+}
+
+function inlineDecorations(model: RenderModel, widgets: InlineWidget[]): Extension {
+  const documentLines = model.document.split('\n')
+  const lineEnds: number[] = []
+  let position = 0
+  documentLines.forEach((line, index) => {
+    position += line.length
+    lineEnds.push(position)
+    if (index < documentLines.length - 1) position += 1
+  })
+  const ranges: Range<Decoration>[] = []
+  widgets.forEach((widget, index) => {
+    const lineIndex = model.lines.findIndex(
+      (line) =>
+        sameAnchor(line.leftAnchor, widget.anchor) || sameAnchor(line.rightAnchor, widget.anchor),
+    )
+    const lineEnd = lineEnds[lineIndex]
+    if (lineIndex < 0 || lineEnd === undefined) return
+    ranges.push(
+      Decoration.widget({
+        widget: new ReactInlineWidget(widget.id, widget.content),
+        block: true,
+        side: 100 + index,
+      }).range(lineEnd),
+    )
+  })
+  return EditorView.decorations.of(Decoration.set(ranges, true))
 }
 
 function lineDecorations(model: RenderModel): Extension {
@@ -151,14 +245,14 @@ function lineDecorations(model: RenderModel): Extension {
   })
 }
 
-function selectionDecoration(model: RenderModel, anchor: DiffAnchor | undefined): Extension {
-  if (!anchor) return []
+function selectionDecoration(model: RenderModel, range: AnchorRange | undefined): Extension {
+  if (!range) return []
   return EditorView.decorations.of((view) => {
     const ranges: Range<Decoration>[] = []
     model.lines.forEach((line, index) => {
       if (
         index + 1 <= view.state.doc.lines &&
-        (sameAnchor(line.leftAnchor, anchor) || sameAnchor(line.rightAnchor, anchor))
+        (anchorInRange(line.leftAnchor, range) || anchorInRange(line.rightAnchor, range))
       ) {
         ranges.push(
           Decoration.line({ attributes: { class: 'cm-diff-selected' } }).range(
@@ -169,4 +263,15 @@ function selectionDecoration(model: RenderModel, anchor: DiffAnchor | undefined)
     })
     return Decoration.set(ranges)
   })
+}
+
+function anchorInRange(anchor: DiffAnchor | undefined, range: AnchorRange): boolean {
+  return (
+    anchor !== undefined &&
+    anchor.path === range.start.path &&
+    anchor.side === range.start.side &&
+    anchor.rangeKey === range.start.rangeKey &&
+    anchor.line >= range.start.line &&
+    anchor.line <= range.end.line
+  )
 }

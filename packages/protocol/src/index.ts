@@ -1,4 +1,12 @@
-export type { AgentSpec, DraftComment, Repo, ReviewConfig, ReviewSession } from './model.js'
+export type {
+  AgentSpec,
+  CreateDraftCommentRequest,
+  DraftComment,
+  Repo,
+  ReviewConfig,
+  ReviewSession,
+  UpdateDraftCommentRequest,
+} from './model.js'
 export type {
   ChatCommandAccepted,
   ChatEntry,

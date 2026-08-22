@@ -153,6 +153,45 @@ describe('ChatService', () => {
     expect(close).toHaveBeenCalledOnce()
     await chats.close()
   })
+
+  it('restores an interrupted daemon turn as retryable transcript state', async () => {
+    const backend = scriptedBackend(() => [
+      { type: 'assistant_delta', text: 'Resumed.' },
+      { type: 'turn_completed' },
+    ])
+    const { chats } = setup(backend)
+    chats.restore('session-1', {
+      snapshot: {
+        sessionId: 'session-1',
+        revision: 3,
+        status: 'running',
+        backend: 'codex',
+        currentTurnId: 'old-turn',
+        entries: [
+          {
+            id: 'old-user',
+            turnId: 'old-turn',
+            createdAt: '2026-08-21T00:00:00.000Z',
+            kind: 'message',
+            role: 'user',
+            text: 'Continue review',
+          },
+        ],
+      },
+      active: { kind: 'message', message: 'Continue review' },
+    })
+
+    expect(chats.get('session-1')).toMatchObject({ status: 'failed', revision: 4 })
+    chats.retry('session-1')
+    const snapshot = await waitForSnapshot(chats, (value) => value.status === 'idle')
+    expect(snapshot.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'message', role: 'assistant', text: 'Resumed.' }),
+      ]),
+    )
+    expect(backend.inputs[0]).toContain('A previous ephemeral review thread was lost')
+    await chats.close()
+  })
 })
 
 function setup(backend: AgentBackend, addSession = true) {

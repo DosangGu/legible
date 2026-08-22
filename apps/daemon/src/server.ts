@@ -41,6 +41,7 @@ export async function createDaemon(options: StartDaemonOptions): Promise<DaemonR
     ...(options.now ? { now: options.now } : {}),
     ...(options.codexBackend ? { codexBackend: options.codexBackend } : {}),
   })
+  await services.persistence.restore()
   await services.preflight.refresh()
 
   const app = await buildApp({

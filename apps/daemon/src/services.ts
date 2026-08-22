@@ -4,6 +4,7 @@ import { CodexBackend } from './agents/codex/backend.js'
 import type { AppServerProcessFactory } from './agents/codex/app-server-client.js'
 import type { AgentBackend } from './agents/types.js'
 import { ChatService } from './chats/service.js'
+import { CommentService } from './comments/service.js'
 import { SessionFileService } from './diffs/file-service.js'
 import { NodeGitFileSource, type FileSource } from './diffs/file-source.js'
 import { SessionDiffService } from './diffs/service.js'
@@ -12,6 +13,8 @@ import { EventBus } from './events/event-bus.js'
 import { NodeCommandRunner, type CommandRunner } from './preflight/command-runner.js'
 import { PreflightService } from './preflight/service.js'
 import { SessionRegistry } from './sessions/session-registry.js'
+import { SessionPersistence } from './sessions/persistence.js'
+import { SessionStore } from './sessions/store.js'
 import { WorktreeService } from './worktrees/service.js'
 
 export type DaemonServices = {
@@ -20,11 +23,13 @@ export type DaemonServices = {
     codex: AgentBackend
   }
   chats: ChatService
+  comments: CommentService
   eventBus: EventBus
   diffs: SessionDiffService
   files: SessionFileService
   preflight: PreflightService
   sessions: SessionRegistry
+  persistence: SessionPersistence
   worktrees: WorktreeService
 }
 
@@ -76,15 +81,29 @@ export function createDaemonServices(options: CreateServicesOptions): DaemonServ
     codex,
     ...(options.now ? { now: options.now } : {}),
   })
+  const persistence = new SessionPersistence(
+    new SessionStore(options.stateDirectory),
+    sessions,
+    chats,
+    eventBus,
+  )
+  const comments = new CommentService(
+    sessions,
+    diffs,
+    persistence,
+    options.now ?? (() => new Date()),
+  )
 
   return {
     repoPath: options.repoPath,
     agents: { codex },
     chats,
+    comments,
     diffs,
     eventBus,
     files,
     preflight,
+    persistence,
     sessions,
     worktrees,
   }

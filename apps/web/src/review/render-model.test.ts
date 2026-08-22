@@ -21,16 +21,16 @@ describe('diff render model', () => {
       expect.arrayContaining([
         expect.objectContaining({
           kind: 'context',
-          leftAnchor: { path: 'src/a.ts', line: 1, side: 'LEFT' },
-          rightAnchor: { path: 'src/a.ts', line: 1, side: 'RIGHT' },
+          leftAnchor: expect.objectContaining({ path: 'src/a.ts', line: 1, side: 'LEFT' }),
+          rightAnchor: expect.objectContaining({ path: 'src/a.ts', line: 1, side: 'RIGHT' }),
         }),
         expect.objectContaining({
           kind: 'deletion',
-          leftAnchor: { path: 'src/a.ts', line: 2, side: 'LEFT' },
+          leftAnchor: expect.objectContaining({ path: 'src/a.ts', line: 2, side: 'LEFT' }),
         }),
         expect.objectContaining({
           kind: 'addition',
-          rightAnchor: { path: 'src/a.ts', line: 2, side: 'RIGHT' },
+          rightAnchor: expect.objectContaining({ path: 'src/a.ts', line: 2, side: 'RIGHT' }),
         }),
       ]),
     )

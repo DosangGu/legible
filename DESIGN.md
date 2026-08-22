@@ -146,6 +146,11 @@ Presets are not a fixed menu — they are **named knob combinations the user sav
 
 Pure in-memory state loses work on daemon restart or browser refresh. This file is also the recovery path when an agent session gets compacted or reset: `list_comments()` reads back current state. It is the single source of truth.
 
+Store a versioned record containing the review session and bounded chat transcript. Write through a
+same-directory temporary file and atomic rename, with `0700` on the sessions directory and `0600`
+on records. Comment mutations flush before API success; streamed chat deltas may be coalesced for up
+to 200 ms and must flush when a turn settles or the daemon shuts down.
+
 ---
 
 ## 4. Diff and Anchoring
@@ -555,7 +560,8 @@ Riskiest first. **Follow the order.**
 | 3 | **Diff parsing + viewer** | Largest single chunk of v0. CodeMirror decorations + inline widgets. Half the time goes here |
 | 4 | Codex adapter core | Stateful app-server transport, permission knobs, event normalization |
 | 5 | Codex main chat | HTTP/WebSocket lifecycle and streamed UI |
-| 6 | Comment array + persistence + submit | Including head SHA display |
+| 6A | Comment array + persistence | Inline single/multi-line drafts and restart recovery |
+| 6B | Submit | GitHub review write and post-submit worktree cleanup |
 | 7 | MCP tools + per-item chats | `itemId` routing |
 | 8 | Claude adapter + subordinate mode | Deferred until the authentication and distribution path is settled |
 | 9 | Shell | Browser, repo registration, PR list, recent items, token auth. Easiest and lowest risk |

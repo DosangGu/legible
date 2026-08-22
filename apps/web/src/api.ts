@@ -2,6 +2,8 @@ import type {
   ApiError,
   ChatCommandAccepted,
   ChatSnapshot,
+  CreateDraftCommentRequest,
+  DraftComment,
   DiffDocument,
   DiffSide,
   ReviewFileContent,
@@ -62,6 +64,40 @@ export function retryChat(sessionId: string): Promise<ChatCommandAccepted> {
   return chatCommand(sessionId, 'retry')
 }
 
+export function fetchComments(sessionId: string, signal?: AbortSignal): Promise<DraftComment[]> {
+  return request<DraftComment[]>(`/api/sessions/${encodeURIComponent(sessionId)}/comments`, {
+    ...(signal ? { signal } : {}),
+  })
+}
+
+export function createComment(
+  sessionId: string,
+  comment: CreateDraftCommentRequest,
+): Promise<DraftComment> {
+  return request<DraftComment>(`/api/sessions/${encodeURIComponent(sessionId)}/comments`, {
+    method: 'POST',
+    body: JSON.stringify(comment),
+  })
+}
+
+export function updateComment(
+  sessionId: string,
+  commentId: string,
+  body: string,
+): Promise<DraftComment> {
+  return request<DraftComment>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/comments/${encodeURIComponent(commentId)}`,
+    { method: 'PATCH', body: JSON.stringify({ body }) },
+  )
+}
+
+export async function deleteComment(sessionId: string, commentId: string): Promise<void> {
+  await request<void>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/comments/${encodeURIComponent(commentId)}`,
+    { method: 'DELETE' },
+  )
+}
+
 function chatCommand(
   sessionId: string,
   action: string,
@@ -85,7 +121,10 @@ async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
       ...options.headers,
     },
   })
-  if (response.ok) return (await response.json()) as T
+  if (response.ok) {
+    if (response.status === 204) return undefined as T
+    return (await response.json()) as T
+  }
 
   let error: ApiError | undefined
   try {

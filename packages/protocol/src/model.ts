@@ -30,6 +30,19 @@ export type DraftComment = {
   createdAt: string
 }
 
+export type CreateDraftCommentRequest = {
+  path: string
+  line: number
+  side: 'LEFT' | 'RIGHT'
+  startLine?: number
+  startSide?: 'LEFT' | 'RIGHT'
+  body: string
+}
+
+export type UpdateDraftCommentRequest = {
+  body: string
+}
+
 export type AgentSpec = {
   backend: 'claude' | 'codex'
   model?: string

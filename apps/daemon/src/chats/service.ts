@@ -19,7 +19,13 @@ const maxMessageBytes = 16 * 1024
 const maxToolTextBytes = 32 * 1024
 const initialDisplayMessage = 'Review this pull request.'
 
-type PendingRequest = { kind: 'review' } | { kind: 'message'; message: string }
+export type PersistedChatRequest = { kind: 'review' } | { kind: 'message'; message: string }
+
+export type PersistedChatState = {
+  snapshot: ChatSnapshot
+  retry?: PersistedChatRequest
+  active?: PersistedChatRequest
+}
 
 type ChatState = {
   snapshot: ChatSnapshot
@@ -27,11 +33,11 @@ type ChatState = {
   active:
     | {
         id: string
-        request: PendingRequest
+        request: PersistedChatRequest
         interrupted: boolean
       }
     | undefined
-  retry: PendingRequest | undefined
+  retry: PersistedChatRequest | undefined
 }
 
 export class ChatNotFoundError extends Error {}
@@ -67,6 +73,50 @@ export class ChatService {
     const session = this.#session(sessionId)
     const state = this.#states.get(sessionId) ?? this.#createState(session)
     return structuredClone(state.snapshot)
+  }
+
+  exportState(sessionId: string): PersistedChatState | undefined {
+    const state = this.#states.get(sessionId)
+    if (!state) return undefined
+    return structuredClone({
+      snapshot: state.snapshot,
+      ...(state.retry ? { retry: state.retry } : {}),
+      ...(state.active ? { active: state.active.request } : {}),
+    })
+  }
+
+  restore(sessionId: string, persisted: PersistedChatState): void {
+    this.#session(sessionId)
+    const snapshot = structuredClone(persisted.snapshot)
+    if (snapshot.sessionId !== sessionId) {
+      throw new Error(`Chat snapshot does not match session: ${sessionId}`)
+    }
+    let retry = persisted.retry
+    if (persisted.active) {
+      retry = persisted.active
+      const turnId = snapshot.currentTurnId ?? this.#idFactory()
+      snapshot.entries.push({
+        id: this.#idFactory(),
+        turnId,
+        createdAt: this.#now().toISOString(),
+        kind: 'notice',
+        level: 'error',
+        message: 'The daemon stopped during this turn. Retry to continue in a new Codex thread.',
+        retryable: true,
+      })
+      snapshot.revision += 1
+      snapshot.status = 'failed'
+      delete snapshot.currentTurnId
+    } else if (['starting', 'running', 'interrupting'].includes(snapshot.status)) {
+      snapshot.status = 'failed'
+      delete snapshot.currentTurnId
+    }
+    this.#states.set(sessionId, {
+      snapshot,
+      agent: undefined,
+      active: undefined,
+      retry,
+    })
   }
 
   startReview(sessionId: string): ChatCommandAccepted {
@@ -124,7 +174,7 @@ export class ChatService {
   #begin(
     session: ReviewSession,
     state: ChatState,
-    request: PendingRequest,
+    request: PersistedChatRequest,
     displayMessage?: string,
   ): ChatCommandAccepted {
     const turnId = this.#idFactory()
@@ -148,7 +198,7 @@ export class ChatService {
     session: ReviewSession,
     state: ChatState,
     turnId: string,
-    request: PendingRequest,
+    request: PersistedChatRequest,
   ): Promise<void> {
     let completed = false
     let terminalError: Extract<AgentEvent, { type: 'error' }> | undefined
@@ -206,7 +256,7 @@ export class ChatService {
   async #buildInput(
     session: ReviewSession,
     state: ChatState,
-    request: PendingRequest,
+    request: PersistedChatRequest,
     recovering: boolean,
   ): Promise<string> {
     const requested =

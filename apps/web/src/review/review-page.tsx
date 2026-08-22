@@ -3,8 +3,10 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useParams } from 'react-router-dom'
 
 import { fetchReviewFile, fetchSessionDiff } from '../api.js'
-import { CodeView, type ScrollRequest } from './code-view.js'
+import { CodeView, type InlineWidget, type ScrollRequest } from './code-view.js'
 import { ChatPanel } from './chat-panel.js'
+import { DraftCommentCard, NewCommentComposer } from './inline-comments.js'
+import { useComments } from './use-comments.js'
 import {
   buildDiffRenderModel,
   buildWholeFileRenderModel,
@@ -62,6 +64,7 @@ export function ReviewPage() {
 
 function ReviewWorkspace({ sessionId, diff }: { sessionId: string; diff: DiffDocument }) {
   const model = useMemo(() => buildDiffRenderModel(diff), [diff])
+  const draftComments = useComments(sessionId)
   const [selectedFileIndex, setSelectedFileIndex] = useState(0)
   const [viewMode, setViewMode] = useState<'diff' | 'whole'>('diff')
   const [anchor, setAnchor] = useState<DiffAnchor>()
@@ -69,6 +72,9 @@ function ReviewWorkspace({ sessionId, diff }: { sessionId: string; diff: DiffDoc
   const [fileCache, setFileCache] = useState(() => new Map<string, ReviewFileContent>())
   const [fileError, setFileError] = useState<{ key: string; message: string }>()
   const [chatCollapsed, setChatCollapsed] = useState(false)
+  const [commentRange, setCommentRange] = useState<CommentRange>()
+  const [commentBody, setCommentBody] = useState('')
+  const [commentError, setCommentError] = useState<string>()
   const selectedFile = selectedDiffFile(diff, selectedFileIndex)
   const target = defaultFileTarget(selectedFile)
   const targetSha = target.side === 'RIGHT' ? diff.headSha : diff.baseSha
@@ -107,12 +113,96 @@ function ReviewWorkspace({ sessionId, diff }: { sessionId: string; diff: DiffDoc
     }
   }
 
+  const selectAnchor = (selected: DiffAnchor, extend: boolean) => {
+    setAnchor(selected)
+    setCommentError(undefined)
+    setCommentRange((current) => {
+      if (
+        !extend ||
+        !current ||
+        current.start.path !== selected.path ||
+        current.start.side !== selected.side ||
+        current.start.rangeKey !== selected.rangeKey
+      ) {
+        setCommentBody('')
+        return { start: selected, end: selected }
+      }
+      return selected.line < current.start.line
+        ? { start: selected, end: current.start }
+        : { start: current.start, end: selected }
+    })
+  }
+
+  const widgetsFor = (rendered: ReturnType<typeof buildDiffRenderModel>): InlineWidget[] => {
+    const widgets: InlineWidget[] = []
+    for (const comment of draftComments.comments) {
+      const commentAnchor = findAnchor(rendered, comment.path, comment.side, comment.line)
+      if (!commentAnchor) continue
+      widgets.push({
+        id: `comment:${comment.id}:${comment.body}`,
+        anchor: commentAnchor,
+        content: (
+          <DraftCommentCard
+            comment={comment}
+            onUpdate={async (body) => {
+              await draftComments.update(comment.id, body)
+            }}
+            onRemove={() => draftComments.remove(comment.id)}
+          />
+        ),
+      })
+    }
+    if (commentRange) {
+      widgets.push({
+        id: `composer:${commentRange.end.path}:${commentRange.end.side}:${String(commentRange.end.line)}`,
+        anchor: commentRange.end,
+        content: (
+          <NewCommentComposer
+            rangeLabel={formatRange(commentRange)}
+            body={commentBody}
+            error={commentError}
+            onBodyChange={setCommentBody}
+            onCancel={() => {
+              setCommentRange(undefined)
+              setCommentBody('')
+              setCommentError(undefined)
+            }}
+            onSubmit={async () => {
+              try {
+                await draftComments.create({
+                  path: commentRange.end.path,
+                  side: commentRange.end.side,
+                  line: commentRange.end.line,
+                  ...(commentRange.start.line !== commentRange.end.line
+                    ? {
+                        startLine: commentRange.start.line,
+                        startSide: commentRange.start.side,
+                      }
+                    : {}),
+                  body: commentBody,
+                })
+                setCommentRange(undefined)
+                setCommentBody('')
+                setCommentError(undefined)
+              } catch (error) {
+                setCommentError(errorMessage(error))
+              }
+            }}
+          />
+        ),
+      })
+    }
+    return widgets
+  }
+
   let viewer = (
     <CodeView
       model={model}
       selectedAnchor={anchor}
-      onAnchorSelect={setAnchor}
+      selectedRange={commentRange}
+      onAnchorSelect={selectAnchor}
       scrollRequest={scrollRequest}
+      inlineWidgets={widgetsFor(model)}
     />
   )
 
@@ -131,11 +221,14 @@ function ReviewWorkspace({ sessionId, diff }: { sessionId: string; diff: DiffDoc
     } else if (cachedFile.content === '') {
       viewer = <ViewerState title="Empty file" />
     } else {
+      const wholeModel = buildWholeFileRenderModel(cachedFile, selectedFile)
       viewer = (
         <CodeView
-          model={buildWholeFileRenderModel(cachedFile, selectedFile)}
+          model={wholeModel}
           selectedAnchor={anchor}
-          onAnchorSelect={setAnchor}
+          selectedRange={commentRange}
+          onAnchorSelect={selectAnchor}
+          inlineWidgets={widgetsFor(wholeModel)}
         />
       )
     }
@@ -159,6 +252,7 @@ function ReviewWorkspace({ sessionId, diff }: { sessionId: string; diff: DiffDoc
           <strong>{String(diff.files.length)}</strong> files
           <span className="additions">+{String(diff.additions)}</span>
           <span className="deletions">−{String(diff.deletions)}</span>
+          <span>{String(draftComments.comments.length)} drafts</span>
         </div>
       </header>
 
@@ -221,7 +315,8 @@ function ReviewWorkspace({ sessionId, diff }: { sessionId: string; diff: DiffDoc
                 <span>line {String(anchor.line)}</span>
               </>
             ) : (
-              'Select a line number to anchor a future comment.'
+              (draftComments.error ??
+              'Select a line number to draft a comment. Shift-click to extend.')
             )}
           </footer>
         </section>
@@ -233,6 +328,27 @@ function ReviewWorkspace({ sessionId, diff }: { sessionId: string; diff: DiffDoc
       </div>
     </main>
   )
+}
+
+type CommentRange = { start: DiffAnchor; end: DiffAnchor }
+
+function findAnchor(
+  model: ReturnType<typeof buildDiffRenderModel>,
+  path: string,
+  side: 'LEFT' | 'RIGHT',
+  line: number,
+): DiffAnchor | undefined {
+  for (const rendered of model.lines) {
+    const anchor = side === 'LEFT' ? rendered.leftAnchor : rendered.rightAnchor
+    if (anchor?.path === path && anchor.line === line) return anchor
+  }
+  return undefined
+}
+
+function formatRange(range: CommentRange): string {
+  return range.start.line === range.end.line
+    ? `${range.end.side} ${String(range.end.line)}`
+    : `${range.end.side} ${String(range.start.line)}–${String(range.end.line)}`
 }
 
 function PageState({

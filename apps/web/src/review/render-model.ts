@@ -10,6 +10,7 @@ export type DiffAnchor = {
   path: string
   line: number
   side: DiffSide
+  rangeKey: string
 }
 
 export type RenderLineKind = DiffLineKind | 'file' | 'hunk' | 'metadata' | 'whole'
@@ -57,7 +58,8 @@ export function buildDiffRenderModel(diff: DiffDocument): RenderModel {
     }
     if (file.isBinary) push('Binary file — preview unavailable', { kind: 'metadata' })
 
-    for (const hunk of file.hunks) {
+    for (const [hunkIndex, hunk] of file.hunks.entries()) {
+      const rangeKey = hunkRangeKey(file, hunkIndex)
       const heading = hunk.heading ? ` ${hunk.heading}` : ''
       push(
         `@@ -${String(hunk.oldStart)},${String(hunk.oldLines)} +${String(hunk.newStart)},${String(hunk.newLines)} @@${heading}`,
@@ -67,11 +69,11 @@ export function buildDiffRenderModel(diff: DiffDocument): RenderModel {
         const leftAnchor =
           line.leftLine === null || file.oldPath === null
             ? undefined
-            : { path: file.oldPath, line: line.leftLine, side: 'LEFT' as const }
+            : { path: file.oldPath, line: line.leftLine, side: 'LEFT' as const, rangeKey }
         const rightAnchor =
           line.rightLine === null || file.newPath === null
             ? undefined
-            : { path: file.newPath, line: line.rightLine, side: 'RIGHT' as const }
+            : { path: file.newPath, line: line.rightLine, side: 'RIGHT' as const, rangeKey }
         const prefix = line.kind === 'addition' ? '+' : line.kind === 'deletion' ? '-' : ' '
         push(`${prefix}${line.content}`, {
           kind: line.kind,
@@ -90,14 +92,17 @@ export function buildWholeFileRenderModel(content: ReviewFileContent, file: Diff
   const document = content.content ?? ''
   const sourceLines = document.split('\n')
   const changed = changedLines(file, content.side)
+  const commentable = commentableLines(file, content.side)
   const lines = sourceLines.map<RenderLine>((_line, index) => {
     const line = index + 1
     const isTrailingPhantom = index === sourceLines.length - 1 && document.endsWith('\n')
     if (isTrailingPhantom) return { kind: 'whole' }
-    const anchor = { path: content.path, line, side: content.side }
+    const rangeKey = commentable.get(line)
+    const anchor = rangeKey ? { path: content.path, line, side: content.side, rangeKey } : undefined
     return {
       kind: 'whole',
-      ...(content.side === 'LEFT' ? { leftAnchor: anchor } : { rightAnchor: anchor }),
+      ...(anchor && content.side === 'LEFT' ? { leftAnchor: anchor } : {}),
+      ...(anchor && content.side === 'RIGHT' ? { rightAnchor: anchor } : {}),
       changed: changed.has(line),
     }
   })
@@ -107,6 +112,21 @@ export function buildWholeFileRenderModel(content: ReviewFileContent, file: Diff
     lines,
     files: [{ index: 0, path: content.path, startLine: 1, source: file }],
   }
+}
+
+function commentableLines(file: DiffFile, side: DiffSide): Map<number, string> {
+  const lines = new Map<number, string>()
+  file.hunks.forEach((hunk, hunkIndex) => {
+    for (const line of hunk.lines) {
+      const value = side === 'LEFT' ? line.leftLine : line.rightLine
+      if (value !== null) lines.set(value, hunkRangeKey(file, hunkIndex))
+    }
+  })
+  return lines
+}
+
+function hunkRangeKey(file: DiffFile, hunkIndex: number): string {
+  return `${file.oldPath ?? '/dev/null'}:${file.newPath ?? '/dev/null'}:${String(hunkIndex)}`
 }
 
 export function defaultFileTarget(file: DiffFile): { path: string; side: DiffSide } {

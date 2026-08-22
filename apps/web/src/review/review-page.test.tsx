@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
@@ -159,6 +159,50 @@ describe('ReviewPage', () => {
     expect(screen.getByText('shell').closest('details')?.open).toBe(false)
     await user.click(screen.getByRole('button', { name: 'Collapse chat' }))
     expect(screen.getByRole('button', { name: 'Open chat' })).toBeTruthy()
+  })
+
+  it('creates an inline multi-line draft with click then shift-click', async () => {
+    let comments: unknown[] = []
+    let submitted: Record<string, unknown> | undefined
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input)
+        if (url.endsWith('/diff')) return jsonResponse(diffDocument())
+        if (url.endsWith('/chat')) return jsonResponse(emptyChat())
+        if (url.endsWith('/comments') && init?.method === 'POST') {
+          submitted = JSON.parse(String(init.body)) as Record<string, unknown>
+          const created = {
+            id: 'comment-1',
+            ...submitted,
+            origin: 'human',
+            createdAt: '2026-08-22T00:00:00.000Z',
+          }
+          comments = [created]
+          return jsonResponse(created, 201)
+        }
+        if (url.endsWith('/comments')) return jsonResponse(comments)
+        throw new Error(`Unexpected request: ${url}`)
+      }),
+    )
+    const user = userEvent.setup()
+    renderReview()
+
+    await user.click(await screen.findByRole('button', { name: 'Select RIGHT line 2' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Select RIGHT line 3' }), {
+      shiftKey: true,
+    })
+    await user.type(await screen.findByRole('textbox', { name: 'Comment body' }), 'Range draft')
+    await user.click(screen.getByRole('button', { name: 'Save comment' }))
+
+    await waitFor(() => expect(document.body.textContent).toContain('Range draft'))
+    expect(submitted).toMatchObject({
+      path: 'src/a.ts',
+      side: 'RIGHT',
+      startLine: 2,
+      startSide: 'RIGHT',
+      line: 3,
+    })
   })
 })
 
