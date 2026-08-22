@@ -9,6 +9,13 @@ import type {
   DiffSide,
 } from '@legible/protocol'
 
+import {
+  ChatBusyError,
+  ChatNotFoundError,
+  ChatRetryUnavailableError,
+  ChatUnavailableError,
+  InvalidChatMessageError,
+} from '../chats/service.js'
 import { ReviewFileNotFoundError, ReviewFileUnavailableError } from '../diffs/file-service.js'
 import { DiffUnavailableError } from '../diffs/service.js'
 import type { DaemonServices } from '../services.js'
@@ -44,6 +51,40 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   app.post('/api/preflight/refresh', async () => options.services.preflight.refresh())
 
   app.get('/api/sessions', async () => options.services.sessions.list())
+
+  app.get<{ Params: { sessionId: string } }>('/api/sessions/:sessionId/chat', (request) =>
+    options.services.chats.get(request.params.sessionId),
+  )
+
+  app.post<{ Params: { sessionId: string } }>(
+    '/api/sessions/:sessionId/chat/start',
+    (request, reply) =>
+      reply.code(202).send(options.services.chats.startReview(request.params.sessionId)),
+  )
+
+  app.post<{ Params: { sessionId: string }; Body: { message?: unknown } }>(
+    '/api/sessions/:sessionId/chat/messages',
+    (request, reply) => {
+      if (typeof request.body?.message !== 'string') {
+        throw new InvalidChatMessageError('A message is required')
+      }
+      return reply
+        .code(202)
+        .send(options.services.chats.send(request.params.sessionId, request.body.message))
+    },
+  )
+
+  app.post<{ Params: { sessionId: string } }>(
+    '/api/sessions/:sessionId/chat/interrupt',
+    (request, reply) =>
+      reply.code(202).send(options.services.chats.interrupt(request.params.sessionId)),
+  )
+
+  app.post<{ Params: { sessionId: string } }>(
+    '/api/sessions/:sessionId/chat/retry',
+    (request, reply) =>
+      reply.code(202).send(options.services.chats.retry(request.params.sessionId)),
+  )
 
   app.get<{ Params: { sessionId: string } }>(
     '/api/sessions/:sessionId/diff',
@@ -122,6 +163,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     socket.once('error', unsubscribe)
   })
 
+  app.addHook('onClose', async () => options.services.chats.close())
+
   app.setNotFoundHandler(async (_request, reply) => {
     const response: ApiError = {
       error: { code: 'not_found', message: 'Route not found' },
@@ -130,6 +173,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   })
 
   app.setErrorHandler(async (error, request, reply) => {
+    const chatError = mapChatError(error)
+    if (chatError) return reply.code(chatError.status).send(chatError.body)
     request.log.error(error)
     const response: ApiError = {
       error: { code: 'internal_error', message: 'Internal server error' },
@@ -138,6 +183,40 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   })
 
   return app
+}
+
+function mapChatError(error: unknown): { status: 400 | 404 | 409; body: ApiError } | undefined {
+  if (error instanceof ChatNotFoundError) {
+    return {
+      status: 404,
+      body: { error: { code: 'session_not_found', message: error.message } },
+    }
+  }
+  if (error instanceof InvalidChatMessageError) {
+    return {
+      status: 400,
+      body: { error: { code: 'invalid_chat_message', message: error.message } },
+    }
+  }
+  if (error instanceof ChatUnavailableError) {
+    return {
+      status: 409,
+      body: { error: { code: 'chat_unavailable', message: error.message } },
+    }
+  }
+  if (error instanceof ChatRetryUnavailableError) {
+    return {
+      status: 409,
+      body: { error: { code: 'chat_retry_unavailable', message: error.message } },
+    }
+  }
+  if (error instanceof ChatBusyError) {
+    return {
+      status: 409,
+      body: { error: { code: 'chat_busy', message: error.message } },
+    }
+  }
+  return undefined
 }
 
 function isDiffSide(value: unknown): value is DiffSide {

@@ -1,5 +1,17 @@
 export type { AgentSpec, DraftComment, Repo, ReviewConfig, ReviewSession } from './model.js'
 export type {
+  ChatCommandAccepted,
+  ChatEntry,
+  ChatEventPayload,
+  ChatMessageEntry,
+  ChatNoticeEntry,
+  ChatSnapshot,
+  ChatStatus,
+  ChatStreamEvent,
+  ChatToolEntry,
+  ChatUsage,
+} from './chat.js'
+export type {
   DiffDocument,
   DiffFile,
   DiffFileStatus,

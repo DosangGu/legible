@@ -1,4 +1,11 @@
-import type { ApiError, DiffDocument, DiffSide, ReviewFileContent } from '@legible/protocol'
+import type {
+  ApiError,
+  ChatCommandAccepted,
+  ChatSnapshot,
+  DiffDocument,
+  DiffSide,
+  ReviewFileContent,
+} from '@legible/protocol'
 
 export class ApiClientError extends Error {
   constructor(
@@ -15,7 +22,9 @@ export async function fetchSessionDiff(
   sessionId: string,
   signal?: AbortSignal,
 ): Promise<DiffDocument> {
-  return request<DiffDocument>(`/api/sessions/${encodeURIComponent(sessionId)}/diff`, signal)
+  return request<DiffDocument>(`/api/sessions/${encodeURIComponent(sessionId)}/diff`, {
+    ...(signal ? { signal } : {}),
+  })
 }
 
 export async function fetchReviewFile(
@@ -27,14 +36,54 @@ export async function fetchReviewFile(
   const query = new URLSearchParams({ path, side })
   return request<ReviewFileContent>(
     `/api/sessions/${encodeURIComponent(sessionId)}/file?${query.toString()}`,
-    signal,
+    { ...(signal ? { signal } : {}) },
   )
 }
 
-async function request<T>(url: string, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(url, {
-    headers: { accept: 'application/json' },
+export function fetchChat(sessionId: string, signal?: AbortSignal): Promise<ChatSnapshot> {
+  return request<ChatSnapshot>(`/api/sessions/${encodeURIComponent(sessionId)}/chat`, {
     ...(signal ? { signal } : {}),
+  })
+}
+
+export function startReview(sessionId: string): Promise<ChatCommandAccepted> {
+  return chatCommand(sessionId, 'start')
+}
+
+export function sendChatMessage(sessionId: string, message: string): Promise<ChatCommandAccepted> {
+  return chatCommand(sessionId, 'messages', { message })
+}
+
+export function interruptChat(sessionId: string): Promise<ChatCommandAccepted> {
+  return chatCommand(sessionId, 'interrupt')
+}
+
+export function retryChat(sessionId: string): Promise<ChatCommandAccepted> {
+  return chatCommand(sessionId, 'retry')
+}
+
+function chatCommand(
+  sessionId: string,
+  action: string,
+  body?: unknown,
+): Promise<ChatCommandAccepted> {
+  return request<ChatCommandAccepted>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/chat/${action}`,
+    {
+      method: 'POST',
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    },
+  )
+}
+
+async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      accept: 'application/json',
+      ...(options.body === undefined ? {} : { 'content-type': 'application/json' }),
+      ...options.headers,
+    },
   })
   if (response.ok) return (await response.json()) as T
 

@@ -4,6 +4,7 @@ import type { WebSocket } from 'ws'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { createSnapshotEvent } from './app.js'
+import type { AgentBackend } from '../agents/types.js'
 import { GitFileSourceError, type FileSource } from '../diffs/file-source.js'
 import { GitDiffSourceError, type DiffSource } from '../diffs/source.js'
 import type { CommandResult, CommandRunner } from '../preflight/command-runner.js'
@@ -277,12 +278,74 @@ describe('daemon API', () => {
 
     await expect(closed).resolves.toBe(1008)
   })
+
+  it('starts main chat over HTTP and streams revisioned events', async () => {
+    const codex: AgentBackend = {
+      async start() {
+        return {
+          async *send() {
+            yield { type: 'assistant_delta' as const, text: 'Review complete.' }
+            yield { type: 'turn_completed' as const }
+          },
+          async interrupt() {},
+          async close() {},
+        }
+      },
+    }
+    const runtime = await makeRuntime(
+      new ReadyCommandRunner(),
+      diffSourceFrom(exampleDiff),
+      undefined,
+      codex,
+    )
+    runtime.services.sessions.add(
+      reviewSession({
+        baseSha: 'a'.repeat(40),
+        headSha: 'b'.repeat(40),
+        config: {
+          main: {
+            backend: 'codex',
+            shell: 'git',
+            network: 'fetch',
+            onOutOfScope: 'deny',
+          },
+        },
+      }),
+    )
+    const { socket } = await connectEvents(runtime.app)
+    const streamed = nextMessage(socket)
+
+    const started = await runtime.app.inject({
+      method: 'POST',
+      url: '/api/sessions/session-1/chat/start',
+    })
+
+    expect(started.statusCode).toBe(202)
+    await expect(streamed).resolves.toMatchObject({
+      type: 'chat.event',
+      payload: { sessionId: 'session-1', revision: 1 },
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const snapshot = await runtime.app.inject({
+      method: 'GET',
+      url: '/api/sessions/session-1/chat',
+    })
+    expect(snapshot.json()).toMatchObject({
+      status: 'idle',
+      entries: [
+        { kind: 'message', role: 'user' },
+        { kind: 'message', role: 'assistant', text: 'Review complete.' },
+      ],
+    })
+    socket.terminate()
+  })
 })
 
 async function makeRuntime(
   runner: CommandRunner = new ReadyCommandRunner(),
   diffSource?: DiffSource,
   fileSource?: FileSource,
+  codexBackend?: AgentBackend,
 ) {
   const runtime = await createDaemon({
     version: '1.2.3',
@@ -290,6 +353,7 @@ async function makeRuntime(
     runner,
     ...(diffSource ? { diffSource } : {}),
     ...(fileSource ? { fileSource } : {}),
+    ...(codexBackend ? { codexBackend } : {}),
     now: () => new Date('2026-08-21T03:00:00.000Z'),
   })
   runtimes.push(runtime)

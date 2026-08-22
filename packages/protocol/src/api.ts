@@ -1,4 +1,5 @@
 import type { ReviewSession } from './model.js'
+import type { ChatEventPayload } from './chat.js'
 
 export type PreflightTool = 'git' | 'gh' | 'claude' | 'codex'
 
@@ -41,6 +42,7 @@ export type DaemonEvent =
   | { type: 'session.added'; payload: ReviewSession }
   | { type: 'session.updated'; payload: ReviewSession }
   | { type: 'session.removed'; payload: { id: string } }
+  | { type: 'chat.event'; payload: ChatEventPayload }
 
 export type DaemonEventEnvelope = DaemonEvent & {
   sequence: number

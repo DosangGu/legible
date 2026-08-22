@@ -3,6 +3,7 @@ import type { PreflightReport } from '@legible/protocol'
 import { CodexBackend } from './agents/codex/backend.js'
 import type { AppServerProcessFactory } from './agents/codex/app-server-client.js'
 import type { AgentBackend } from './agents/types.js'
+import { ChatService } from './chats/service.js'
 import { SessionFileService } from './diffs/file-service.js'
 import { NodeGitFileSource, type FileSource } from './diffs/file-source.js'
 import { SessionDiffService } from './diffs/service.js'
@@ -18,6 +19,7 @@ export type DaemonServices = {
   agents: {
     codex: AgentBackend
   }
+  chats: ChatService
   eventBus: EventBus
   diffs: SessionDiffService
   files: SessionFileService
@@ -36,6 +38,7 @@ export type CreateServicesOptions = {
   now?: () => Date
   onListenerError?: (error: unknown) => void
   codexProcessFactory?: AppServerProcessFactory
+  codexBackend?: AgentBackend
 }
 
 export function createDaemonServices(options: CreateServicesOptions): DaemonServices {
@@ -61,13 +64,23 @@ export function createDaemonServices(options: CreateServicesOptions): DaemonServ
     ...(options.worktreeTtlMs !== undefined ? { ttlMs: options.worktreeTtlMs } : {}),
     ...(options.now ? { now: options.now } : {}),
   })
-  const codex = new CodexBackend({
-    ...(options.codexProcessFactory ? { processFactory: options.codexProcessFactory } : {}),
+  const codex =
+    options.codexBackend ??
+    new CodexBackend({
+      ...(options.codexProcessFactory ? { processFactory: options.codexProcessFactory } : {}),
+    })
+  const chats = new ChatService({
+    sessions,
+    diffs,
+    eventBus,
+    codex,
+    ...(options.now ? { now: options.now } : {}),
   })
 
   return {
     repoPath: options.repoPath,
     agents: { codex },
+    chats,
     diffs,
     eventBus,
     files,

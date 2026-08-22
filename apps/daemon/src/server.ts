@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify'
 import type { FileSource } from './diffs/file-source.js'
 import type { DiffSource } from './diffs/source.js'
 import type { CommandRunner } from './preflight/command-runner.js'
+import type { AgentBackend } from './agents/types.js'
 import { buildApp } from './api/app.js'
 import { createDaemonServices, type DaemonServices } from './services.js'
 
@@ -21,6 +22,7 @@ export type StartDaemonOptions = {
   stateDirectory?: string
   worktreeTtlMs?: number
   now?: () => Date
+  codexBackend?: AgentBackend
 }
 
 export type DaemonRuntime = {
@@ -37,6 +39,7 @@ export async function createDaemon(options: StartDaemonOptions): Promise<DaemonR
     ...(options.stateDirectory ? { stateDirectory: options.stateDirectory } : {}),
     ...(options.worktreeTtlMs !== undefined ? { worktreeTtlMs: options.worktreeTtlMs } : {}),
     ...(options.now ? { now: options.now } : {}),
+    ...(options.codexBackend ? { codexBackend: options.codexBackend } : {}),
   })
   await services.preflight.refresh()
 

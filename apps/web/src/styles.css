@@ -195,7 +195,11 @@ button {
 .review-body {
   display: grid;
   min-height: 0;
-  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-columns: 280px minmax(0, 1fr) 360px;
+}
+
+.review-body.chat-is-collapsed {
+  grid-template-columns: 280px minmax(0, 1fr) 42px;
 }
 
 .file-sidebar {
@@ -389,6 +393,194 @@ button {
   border-left: 1px solid var(--border);
 }
 
+.chat-panel {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: 43px minmax(0, 1fr) auto auto;
+  border-left: 1px solid var(--border);
+  background: var(--surface-1);
+}
+
+.chat-panel-collapsed {
+  grid-template-rows: 43px;
+}
+
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px 0 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.chat-header div {
+  display: grid;
+  gap: 2px;
+}
+
+.chat-header strong {
+  color: var(--bright);
+  font-size: 12px;
+}
+
+.chat-header span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.chat-toggle {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  background: var(--surface-0);
+  cursor: pointer;
+}
+
+.chat-panel-collapsed .chat-header {
+  justify-content: center;
+  padding: 0;
+}
+
+.chat-transcript {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  padding: 14px;
+}
+
+.chat-empty,
+.chat-start {
+  margin: auto;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.chat-start p {
+  max-width: 250px;
+  margin: 0 0 14px;
+  line-height: 1.5;
+}
+
+.chat-message {
+  max-width: 92%;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.chat-message-user {
+  align-self: flex-end;
+  border-color: #3e6589;
+  background: #1d3b56;
+}
+
+.chat-message-assistant {
+  align-self: flex-start;
+  background: var(--surface-2);
+}
+
+.chat-notice,
+.chat-command-error {
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+.chat-notice-info {
+  color: var(--muted);
+  background: var(--surface-2);
+}
+
+.chat-notice-error,
+.chat-command-error {
+  color: #ffc0c4;
+  background: var(--red-bg);
+}
+
+.chat-tool {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--muted);
+  background: var(--surface-0);
+  font-size: 11px;
+}
+
+.chat-tool summary {
+  display: flex;
+  gap: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.chat-tool summary strong {
+  color: var(--text);
+}
+
+.chat-tool pre {
+  max-height: 180px;
+  margin: 0;
+  padding: 9px 10px;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  color: #aeb9c9;
+  font-size: 10px;
+  white-space: pre-wrap;
+}
+
+.chat-command-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 10px 8px;
+}
+
+.chat-command-error button,
+.chat-composer button {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-3);
+  cursor: pointer;
+}
+
+.chat-composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+  padding: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.chat-composer textarea {
+  min-height: 58px;
+  max-height: 160px;
+  resize: vertical;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  outline: none;
+  color: var(--text);
+  background: var(--surface-0);
+  font: inherit;
+  font-size: 12px;
+}
+
+.chat-composer textarea:focus {
+  border-color: #4776a7;
+}
+
 .cm-editor {
   color: #c8d1df;
   background: var(--surface-0);
@@ -497,6 +689,28 @@ button {
   .review-body {
     grid-template-rows: auto minmax(0, 1fr);
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .review-body.chat-is-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .chat-panel {
+    position: fixed;
+    z-index: 10;
+    inset: 58px 0 0;
+    width: 100%;
+  }
+
+  .chat-panel-collapsed {
+    top: 64px;
+    right: 8px;
+    bottom: auto;
+    left: auto;
+    width: 42px;
+    height: 43px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
   }
 
   .file-sidebar {

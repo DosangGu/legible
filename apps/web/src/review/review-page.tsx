@@ -4,6 +4,7 @@ import { useParams } from 'react-router-dom'
 
 import { fetchReviewFile, fetchSessionDiff } from '../api.js'
 import { CodeView, type ScrollRequest } from './code-view.js'
+import { ChatPanel } from './chat-panel.js'
 import {
   buildDiffRenderModel,
   buildWholeFileRenderModel,
@@ -67,6 +68,7 @@ function ReviewWorkspace({ sessionId, diff }: { sessionId: string; diff: DiffDoc
   const [scrollRequest, setScrollRequest] = useState<ScrollRequest>()
   const [fileCache, setFileCache] = useState(() => new Map<string, ReviewFileContent>())
   const [fileError, setFileError] = useState<{ key: string; message: string }>()
+  const [chatCollapsed, setChatCollapsed] = useState(false)
   const selectedFile = selectedDiffFile(diff, selectedFileIndex)
   const target = defaultFileTarget(selectedFile)
   const targetSha = target.side === 'RIGHT' ? diff.headSha : diff.baseSha
@@ -160,7 +162,7 @@ function ReviewWorkspace({ sessionId, diff }: { sessionId: string; diff: DiffDoc
         </div>
       </header>
 
-      <div className="review-body">
+      <div className={chatCollapsed ? 'review-body chat-is-collapsed' : 'review-body'}>
         <aside className="file-sidebar" aria-label="Changed files">
           <div className="sidebar-heading">Changed files</div>
           <nav>
@@ -223,6 +225,11 @@ function ReviewWorkspace({ sessionId, diff }: { sessionId: string; diff: DiffDoc
             )}
           </footer>
         </section>
+        <ChatPanel
+          sessionId={sessionId}
+          collapsed={chatCollapsed}
+          onToggle={() => setChatCollapsed((value) => !value)}
+        />
       </div>
     </main>
   )
