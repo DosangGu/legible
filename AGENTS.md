@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This npm workspace separates runnable applications from reusable code. `apps/daemon` contains the Node daemon, `apps/web` contains the Vite/React SPA, and `packages/shared` contains browser-safe shared types and protocols. Tests live beside source as `*.test.ts` or `*.test.tsx`. Generated output belongs in each workspace's `dist/`. `DESIGN.md` remains the authoritative product and architecture specification; update it when implementation changes a documented decision.
+This npm workspace separates runnable applications from reusable contracts. `apps/daemon` contains the feature-grouped Node daemon, `apps/web` contains the Vite/React SPA, and `packages/protocol` contains browser-safe HTTP/WebSocket types and domain models. Tests live beside source as `*.test.ts` or `*.test.tsx`; shared fixtures belong in `src/testing/` and are excluded from production builds. Generated output belongs in each workspace's `dist/`. `DESIGN.md` remains the authoritative architecture specification.
 
 ## Build, Test, and Development Commands
 
@@ -10,7 +10,7 @@ Use Node 24 (`nvm use`) and install the locked dependencies with `npm ci`. Key r
 
 ```bash
 npm run dev           # watch shared/daemon code and run Vite
-npm run build         # build shared, daemon, then web
+npm run build         # build protocol, daemon, then web
 npm test              # run Vitest once
 npm run lint          # run ESLint with zero warnings
 npm run format:check  # verify Prettier formatting

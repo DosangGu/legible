@@ -72,7 +72,7 @@ legible add <path>   # register a repo only
 
 Lock at `~/.local/state/legible/daemon.sock`. If alive, attach; otherwise spawn. **Must be idempotent.**
 
-Preflight on startup: presence and version of `git`, `gh`, `claude`, `codex`, plus auth status (`gh auth status` etc.). Failing here beats dying mid-review on an expired token.
+Preflight on startup: presence and version of `git`, `gh`, `claude`, `codex`, plus auth status (`gh auth status` etc.). A failed check starts the daemon in **degraded mode** so the UI can show recovery guidance, but review-starting actions remain blocked. This surfaces an expired token before a review without making diagnostics depend on a successful preflight.
 
 ---
 
