@@ -33,10 +33,16 @@ npm run dev --workspace @legible/daemon
 ```
 
 It currently provides health and preflight status, preflight refresh, an in-memory session list,
-a normalized session diff, and a read-only WebSocket event stream under `/api`. Session diffs are
-available from `GET /api/sessions/:sessionId/diff`. Missing tools or authentication place the
-daemon in degraded mode without preventing the status API from starting. The web entrypoint
-remains intentionally empty.
+a normalized session diff, restricted whole-file content, and a read-only WebSocket event stream
+under `/api`. Session diffs are available from `GET /api/sessions/:sessionId/diff`; the web review
+screen uses `GET /api/sessions/:sessionId/file?path=...&side=RIGHT` for its whole-file toggle. That
+endpoint accepts only paths and sides present in the session diff, so it cannot act as a general
+file browser. Missing tools or authentication place the daemon in degraded mode without preventing
+the status API from starting.
+
+Open `/review/:sessionId` in the web app to view a unified, read-only CodeMirror diff. Changed-file
+navigation, left/right line anchors, whole-file context, loading, empty, binary, and API error states
+are available; comment authoring and submission arrive in later milestones.
 
 The daemon also owns the internal PR worktree lifecycle. It creates detached worktrees outside
 the checkout, reuses their pinned commits, refuses destructive cleanup of dirty or unknown paths,

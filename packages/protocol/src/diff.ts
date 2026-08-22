@@ -38,3 +38,14 @@ export type DiffDocument = {
   deletions: number
   files: DiffFile[]
 }
+
+export type DiffSide = 'LEFT' | 'RIGHT'
+
+export type ReviewFileContent = {
+  path: string
+  side: DiffSide
+  sha: string
+  content: string | null
+  isBinary: boolean
+  byteLength: number
+}

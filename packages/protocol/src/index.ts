@@ -6,6 +6,8 @@ export type {
   DiffHunk,
   DiffLine,
   DiffLineKind,
+  DiffSide,
+  ReviewFileContent,
 } from './diff.js'
 export type {
   ApiError,

@@ -1,8 +1,15 @@
 import websocket from '@fastify/websocket'
 import Fastify, { type FastifyInstance } from 'fastify'
 
-import type { ApiError, DaemonEventEnvelope, DaemonHealth, DaemonSnapshot } from '@legible/protocol'
+import type {
+  ApiError,
+  DaemonEventEnvelope,
+  DaemonHealth,
+  DaemonSnapshot,
+  DiffSide,
+} from '@legible/protocol'
 
+import { ReviewFileNotFoundError, ReviewFileUnavailableError } from '../diffs/file-service.js'
 import { DiffUnavailableError } from '../diffs/service.js'
 import type { DaemonServices } from '../services.js'
 
@@ -63,6 +70,45 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     },
   )
 
+  app.get<{
+    Params: { sessionId: string }
+    Querystring: { path?: unknown; side?: unknown }
+  }>('/api/sessions/:sessionId/file', async (request, reply) => {
+    const session = options.services.sessions.get(request.params.sessionId)
+    if (!session) {
+      const response: ApiError = {
+        error: { code: 'session_not_found', message: 'Review session not found' },
+      }
+      return reply.code(404).send(response)
+    }
+
+    const { path, side } = request.query
+    if (typeof path !== 'string' || path.length === 0 || !isDiffSide(side)) {
+      const response: ApiError = {
+        error: { code: 'invalid_file_request', message: 'A file path and side are required' },
+      }
+      return reply.code(400).send(response)
+    }
+
+    try {
+      return await options.services.files.get(session, path, side)
+    } catch (error) {
+      if (error instanceof ReviewFileNotFoundError) {
+        const response: ApiError = {
+          error: { code: 'file_not_found', message: 'File is not part of this review diff' },
+        }
+        return reply.code(404).send(response)
+      }
+      if (error instanceof ReviewFileUnavailableError) {
+        const response: ApiError = {
+          error: { code: 'file_unavailable', message: 'File unavailable for this session' },
+        }
+        return reply.code(409).send(response)
+      }
+      throw error
+    }
+  })
+
   app.get('/api/events', { websocket: true }, (socket) => {
     const send = (event: DaemonEventEnvelope) => {
       if (socket.readyState === 1) socket.send(JSON.stringify(event))
@@ -92,6 +138,10 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   })
 
   return app
+}
+
+function isDiffSide(value: unknown): value is DiffSide {
+  return value === 'LEFT' || value === 'RIGHT'
 }
 
 export function createSnapshotEvent(

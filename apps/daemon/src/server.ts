@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 
+import type { FileSource } from './diffs/file-source.js'
 import type { DiffSource } from './diffs/source.js'
 import type { CommandRunner } from './preflight/command-runner.js'
 import { buildApp } from './api/app.js'
@@ -16,6 +17,7 @@ export type StartDaemonOptions = {
   logger?: boolean
   runner?: CommandRunner
   diffSource?: DiffSource
+  fileSource?: FileSource
   stateDirectory?: string
   worktreeTtlMs?: number
   now?: () => Date
@@ -31,6 +33,7 @@ export async function createDaemon(options: StartDaemonOptions): Promise<DaemonR
     repoPath: options.repoPath,
     ...(options.runner ? { runner: options.runner } : {}),
     ...(options.diffSource ? { diffSource: options.diffSource } : {}),
+    ...(options.fileSource ? { fileSource: options.fileSource } : {}),
     ...(options.stateDirectory ? { stateDirectory: options.stateDirectory } : {}),
     ...(options.worktreeTtlMs !== undefined ? { worktreeTtlMs: options.worktreeTtlMs } : {}),
     ...(options.now ? { now: options.now } : {}),

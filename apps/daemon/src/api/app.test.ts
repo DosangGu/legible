@@ -4,6 +4,7 @@ import type { WebSocket } from 'ws'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { createSnapshotEvent } from './app.js'
+import { GitFileSourceError, type FileSource } from '../diffs/file-source.js'
 import { GitDiffSourceError, type DiffSource } from '../diffs/source.js'
 import type { CommandResult, CommandRunner } from '../preflight/command-runner.js'
 import { createDaemon, type DaemonRuntime } from '../server.js'
@@ -137,6 +138,82 @@ describe('daemon API', () => {
     })
   })
 
+  it('returns whole-file content only for a path and side in the session diff', async () => {
+    const fileSource: FileSource = {
+      async read(input) {
+        expect(input).toEqual({
+          cwd: '/state/worktrees/owner/repo/pr-42',
+          sha: 'b'.repeat(40),
+          path: 'example.ts',
+        })
+        return new TextEncoder().encode('after\n')
+      },
+    }
+    const runtime = await makeRuntime(
+      new ReadyCommandRunner(),
+      diffSourceFrom(exampleDiff),
+      fileSource,
+    )
+    runtime.services.sessions.add(
+      reviewSession({ baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40) }),
+    )
+
+    const response = await runtime.app.inject({
+      method: 'GET',
+      url: '/api/sessions/session-1/file?path=example.ts&side=RIGHT',
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({
+      path: 'example.ts',
+      side: 'RIGHT',
+      sha: 'b'.repeat(40),
+      content: 'after\n',
+      isBinary: false,
+      byteLength: 6,
+    })
+
+    const unauthorized = await runtime.app.inject({
+      method: 'GET',
+      url: '/api/sessions/session-1/file?path=.git%2Fconfig&side=RIGHT',
+    })
+    expect(unauthorized.statusCode).toBe(404)
+    expect(unauthorized.json()).toMatchObject({ error: { code: 'file_not_found' } })
+
+    const wrongSide = await runtime.app.inject({
+      method: 'GET',
+      url: '/api/sessions/session-1/file?path=example.ts&side=MIDDLE',
+    })
+    expect(wrongSide.statusCode).toBe(400)
+    expect(wrongSide.json()).toMatchObject({ error: { code: 'invalid_file_request' } })
+  })
+
+  it('returns a stable error when a reviewed file cannot be read', async () => {
+    const fileSource: FileSource = {
+      async read() {
+        throw new GitFileSourceError('missing object', 128)
+      },
+    }
+    const runtime = await makeRuntime(
+      new ReadyCommandRunner(),
+      diffSourceFrom(exampleDiff),
+      fileSource,
+    )
+    runtime.services.sessions.add(
+      reviewSession({ baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40) }),
+    )
+
+    const response = await runtime.app.inject({
+      method: 'GET',
+      url: '/api/sessions/session-1/file?path=example.ts&side=RIGHT',
+    })
+
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toEqual({
+      error: { code: 'file_unavailable', message: 'File unavailable for this session' },
+    })
+  })
+
   it('treats malformed Git output as an internal parser error', async () => {
     const runtime = await makeRuntime(
       new ReadyCommandRunner(),
@@ -205,17 +282,28 @@ describe('daemon API', () => {
 async function makeRuntime(
   runner: CommandRunner = new ReadyCommandRunner(),
   diffSource?: DiffSource,
+  fileSource?: FileSource,
 ) {
   const runtime = await createDaemon({
     version: '1.2.3',
     repoPath: '/repo',
     runner,
     ...(diffSource ? { diffSource } : {}),
+    ...(fileSource ? { fileSource } : {}),
     now: () => new Date('2026-08-21T03:00:00.000Z'),
   })
   runtimes.push(runtime)
   return runtime
 }
+
+const exampleDiff = [
+  'diff --git a/example.ts b/example.ts',
+  '--- a/example.ts',
+  '+++ b/example.ts',
+  '@@ -1 +1 @@',
+  '-before',
+  '+after',
+]
 
 function diffSourceFrom(lines: readonly string[]): DiffSource {
   return {
