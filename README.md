@@ -33,7 +33,8 @@ npm run dev --workspace @legible/daemon
 ```
 
 It currently provides health and preflight status, preflight refresh, an in-memory session list,
-and a read-only WebSocket event stream under `/api`. Missing tools or authentication place the
+a normalized session diff, and a read-only WebSocket event stream under `/api`. Session diffs are
+available from `GET /api/sessions/:sessionId/diff`. Missing tools or authentication place the
 daemon in degraded mode without preventing the status API from starting. The web entrypoint
 remains intentionally empty.
 

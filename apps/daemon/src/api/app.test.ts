@@ -4,6 +4,7 @@ import type { WebSocket } from 'ws'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { createSnapshotEvent } from './app.js'
+import { GitDiffSourceError, type DiffSource } from '../diffs/source.js'
 import type { CommandResult, CommandRunner } from '../preflight/command-runner.js'
 import { createDaemon, type DaemonRuntime } from '../server.js'
 import { ReadyCommandRunner, reviewSession } from '../testing/fixtures.js'
@@ -76,6 +77,86 @@ describe('daemon API', () => {
     expect(health.json()).toMatchObject({ status: 'ready' })
   })
 
+  it('returns a normalized diff for a registered session', async () => {
+    const source = diffSourceFrom([
+      'diff --git a/example.ts b/example.ts',
+      '--- a/example.ts',
+      '+++ b/example.ts',
+      '@@ -1 +1 @@',
+      '-before',
+      '+after',
+    ])
+    const runtime = await makeRuntime(new ReadyCommandRunner(), source)
+    runtime.services.sessions.add(
+      reviewSession({ baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40) }),
+    )
+
+    const response = await runtime.app.inject({
+      method: 'GET',
+      url: '/api/sessions/session-1/diff',
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({
+      baseSha: 'a'.repeat(40),
+      headSha: 'b'.repeat(40),
+      additions: 1,
+      deletions: 1,
+      files: [{ oldPath: 'example.ts', newPath: 'example.ts' }],
+    })
+  })
+
+  it('returns stable errors for missing sessions and unavailable diffs', async () => {
+    const source: DiffSource = {
+      async *read() {
+        yield ''
+        throw new GitDiffSourceError('missing object', 128)
+      },
+    }
+    const runtime = await makeRuntime(new ReadyCommandRunner(), source)
+
+    const missing = await runtime.app.inject({
+      method: 'GET',
+      url: '/api/sessions/missing/diff',
+    })
+    expect(missing.statusCode).toBe(404)
+    expect(missing.json()).toEqual({
+      error: { code: 'session_not_found', message: 'Review session not found' },
+    })
+
+    runtime.services.sessions.add(
+      reviewSession({ baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40) }),
+    )
+    const unavailable = await runtime.app.inject({
+      method: 'GET',
+      url: '/api/sessions/session-1/diff',
+    })
+    expect(unavailable.statusCode).toBe(409)
+    expect(unavailable.json()).toEqual({
+      error: { code: 'diff_unavailable', message: 'Diff unavailable for this session' },
+    })
+  })
+
+  it('treats malformed Git output as an internal parser error', async () => {
+    const runtime = await makeRuntime(
+      new ReadyCommandRunner(),
+      diffSourceFrom(['diff --git a/example.ts b/example.ts', '@@ -1,2 +1,2 @@', ' one']),
+    )
+    runtime.services.sessions.add(
+      reviewSession({ baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40) }),
+    )
+
+    const response = await runtime.app.inject({
+      method: 'GET',
+      url: '/api/sessions/session-1/diff',
+    })
+
+    expect(response.statusCode).toBe(500)
+    expect(response.json()).toEqual({
+      error: { code: 'internal_error', message: 'Internal server error' },
+    })
+  })
+
   it('creates a snapshot and broadcasts ordered registry and preflight events', async () => {
     const runtime = await makeRuntime()
     const snapshot = createSnapshotEvent(
@@ -121,15 +202,27 @@ describe('daemon API', () => {
   })
 })
 
-async function makeRuntime(runner: CommandRunner = new ReadyCommandRunner()) {
+async function makeRuntime(
+  runner: CommandRunner = new ReadyCommandRunner(),
+  diffSource?: DiffSource,
+) {
   const runtime = await createDaemon({
     version: '1.2.3',
     repoPath: '/repo',
     runner,
+    ...(diffSource ? { diffSource } : {}),
     now: () => new Date('2026-08-21T03:00:00.000Z'),
   })
   runtimes.push(runtime)
   return runtime
+}
+
+function diffSourceFrom(lines: readonly string[]): DiffSource {
+  return {
+    async *read() {
+      for (const line of lines) yield line
+    },
+  }
 }
 
 function nextMessage(socket: WebSocket): Promise<DaemonEventEnvelope> {

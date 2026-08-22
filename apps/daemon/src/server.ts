@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 
+import type { DiffSource } from './diffs/source.js'
 import type { CommandRunner } from './preflight/command-runner.js'
 import { buildApp } from './api/app.js'
 import { createDaemonServices, type DaemonServices } from './services.js'
@@ -14,6 +15,7 @@ export type StartDaemonOptions = {
   port?: number
   logger?: boolean
   runner?: CommandRunner
+  diffSource?: DiffSource
   stateDirectory?: string
   worktreeTtlMs?: number
   now?: () => Date
@@ -28,6 +30,7 @@ export async function createDaemon(options: StartDaemonOptions): Promise<DaemonR
   const services = createDaemonServices({
     repoPath: options.repoPath,
     ...(options.runner ? { runner: options.runner } : {}),
+    ...(options.diffSource ? { diffSource: options.diffSource } : {}),
     ...(options.stateDirectory ? { stateDirectory: options.stateDirectory } : {}),
     ...(options.worktreeTtlMs !== undefined ? { worktreeTtlMs: options.worktreeTtlMs } : {}),
     ...(options.now ? { now: options.now } : {}),

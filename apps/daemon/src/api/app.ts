@@ -3,6 +3,7 @@ import Fastify, { type FastifyInstance } from 'fastify'
 
 import type { ApiError, DaemonEventEnvelope, DaemonHealth, DaemonSnapshot } from '@legible/protocol'
 
+import { DiffUnavailableError } from '../diffs/service.js'
 import type { DaemonServices } from '../services.js'
 
 export type BuildAppOptions = {
@@ -36,6 +37,31 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   app.post('/api/preflight/refresh', async () => options.services.preflight.refresh())
 
   app.get('/api/sessions', async () => options.services.sessions.list())
+
+  app.get<{ Params: { sessionId: string } }>(
+    '/api/sessions/:sessionId/diff',
+    async (request, reply) => {
+      const session = options.services.sessions.get(request.params.sessionId)
+      if (!session) {
+        const response: ApiError = {
+          error: { code: 'session_not_found', message: 'Review session not found' },
+        }
+        return reply.code(404).send(response)
+      }
+
+      try {
+        return await options.services.diffs.get(session)
+      } catch (error) {
+        if (error instanceof DiffUnavailableError) {
+          const response: ApiError = {
+            error: { code: 'diff_unavailable', message: 'Diff unavailable for this session' },
+          }
+          return reply.code(409).send(response)
+        }
+        throw error
+      }
+    },
+  )
 
   app.get('/api/events', { websocket: true }, (socket) => {
     const send = (event: DaemonEventEnvelope) => {

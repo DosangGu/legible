@@ -1,5 +1,7 @@
 import type { PreflightReport } from '@legible/protocol'
 
+import { SessionDiffService } from './diffs/service.js'
+import { NodeGitDiffSource, type DiffSource } from './diffs/source.js'
 import { EventBus } from './events/event-bus.js'
 import { NodeCommandRunner, type CommandRunner } from './preflight/command-runner.js'
 import { PreflightService } from './preflight/service.js'
@@ -9,6 +11,7 @@ import { WorktreeService } from './worktrees/service.js'
 export type DaemonServices = {
   repoPath: string
   eventBus: EventBus
+  diffs: SessionDiffService
   preflight: PreflightService
   sessions: SessionRegistry
   worktrees: WorktreeService
@@ -17,6 +20,7 @@ export type DaemonServices = {
 export type CreateServicesOptions = {
   repoPath: string
   runner?: CommandRunner
+  diffSource?: DiffSource
   stateDirectory?: string
   worktreeTtlMs?: number
   now?: () => Date
@@ -30,6 +34,7 @@ export function createDaemonServices(options: CreateServicesOptions): DaemonServ
     ...(options.onListenerError ? { onListenerError: options.onListenerError } : {}),
   })
   const sessions = new SessionRegistry(eventBus)
+  const diffs = new SessionDiffService(options.diffSource ?? new NodeGitDiffSource())
   const publishPreflight = (report: PreflightReport) => {
     eventBus.publish({ type: 'preflight.updated', payload: report })
   }
@@ -47,6 +52,7 @@ export function createDaemonServices(options: CreateServicesOptions): DaemonServ
 
   return {
     repoPath: options.repoPath,
+    diffs,
     eventBus,
     preflight,
     sessions,

@@ -172,6 +172,8 @@ From each unified-diff hunk header `@@ -a,b +c,d @@`, **track both line counters
 
 Attach `{ leftLine: number | null, rightLine: number | null }` to every rendered line. Then no conversion is needed when placing a comment. **Retrofitting this means rewriting the parser.**
 
+The daemon consumes `git diff` as a line stream and rejects hunks whose declared line counts do not match the parsed lines. Returning no diff is safer than returning incorrect comment anchors.
+
 ### Anchor with line + side
 
 Do not use the legacy `position` field (diff-hunk relative offset). With `line` + `side` (plus `start_line`/`start_side` for multi-line), comments can be built from the local diff alone.
