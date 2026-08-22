@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { access, mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { NodeCommandRunner } from './command-runner.js'
 
@@ -27,5 +30,25 @@ describe('NodeCommandRunner', () => {
     })
 
     expect(result).toEqual({ status: 'timed_out' })
+  })
+
+  it('runs commands in the requested working directory', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'legible-command-runner-'))
+    try {
+      const runner = new NodeCommandRunner()
+      const result = await runner.run(
+        process.execPath,
+        ['-e', "require('node:fs').writeFileSync('marker', '')"],
+        {
+          timeoutMs: 1_000,
+          cwd: directory,
+        },
+      )
+
+      expect(result).toMatchObject({ status: 'completed' })
+      await expect(access(join(directory, 'marker'))).resolves.toBeUndefined()
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 })

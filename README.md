@@ -36,3 +36,8 @@ It currently provides health and preflight status, preflight refresh, an in-memo
 and a read-only WebSocket event stream under `/api`. Missing tools or authentication place the
 daemon in degraded mode without preventing the status API from starting. The web entrypoint
 remains intentionally empty.
+
+The daemon also owns the internal PR worktree lifecycle. It creates detached worktrees outside
+the checkout, reuses their pinned commits, refuses destructive cleanup of dirty or unknown paths,
+and sweeps inactive worktrees after 14 days. Review creation will expose this capability in a
+later implementation step.

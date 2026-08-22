@@ -8,6 +8,7 @@ export type CommandResult =
 
 export type CommandOptions = {
   timeoutMs: number
+  cwd?: string
 }
 
 export interface CommandRunner {
@@ -29,6 +30,7 @@ export class NodeCommandRunner implements CommandRunner {
           encoding: 'utf8',
           maxBuffer: 1024 * 1024,
           timeout: options.timeoutMs,
+          ...(options.cwd ? { cwd: options.cwd } : {}),
         },
         (error, stdout, stderr) => {
           if (!error) {

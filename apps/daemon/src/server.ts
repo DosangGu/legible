@@ -14,6 +14,8 @@ export type StartDaemonOptions = {
   port?: number
   logger?: boolean
   runner?: CommandRunner
+  stateDirectory?: string
+  worktreeTtlMs?: number
   now?: () => Date
 }
 
@@ -26,6 +28,8 @@ export async function createDaemon(options: StartDaemonOptions): Promise<DaemonR
   const services = createDaemonServices({
     repoPath: options.repoPath,
     ...(options.runner ? { runner: options.runner } : {}),
+    ...(options.stateDirectory ? { stateDirectory: options.stateDirectory } : {}),
+    ...(options.worktreeTtlMs !== undefined ? { worktreeTtlMs: options.worktreeTtlMs } : {}),
     ...(options.now ? { now: options.now } : {}),
   })
   await services.preflight.refresh()
@@ -37,6 +41,19 @@ export async function createDaemon(options: StartDaemonOptions): Promise<DaemonR
     ...(options.now ? { now: options.now } : {}),
   })
   await app.ready()
+
+  try {
+    const activePaths = services.sessions.list().map(({ worktreePath }) => worktreePath)
+    const sweep = await services.worktrees.sweep(activePaths)
+    if (sweep.removed.length > 0 || sweep.failed.length > 0) {
+      app.log.info(
+        { removed: sweep.removed.length, failed: sweep.failed.length },
+        'Completed startup worktree sweep',
+      )
+    }
+  } catch (error) {
+    app.log.warn({ err: error }, 'Startup worktree sweep failed')
+  }
 
   return { app, services }
 }

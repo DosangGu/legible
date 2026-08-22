@@ -200,8 +200,9 @@ git worktree add --detach <path> FETCH_HEAD
 
 - **Never run `gh pr checkout` in the main repo.** It switches branches and disturbs the user's working state.
 - **Detached HEAD.** Reviewing involves no commits.
-- **Path outside the repo:** `~/.local/state/legible/worktrees/<repoId>/pr-<n>`. Inside the repo it pollutes `git status` and ignore rules.
-- **GC is required.** `git worktree prune` only clears stale entries. Clean up on submit, plus a TTL sweep on daemon start.
+- **Path outside the repo:** `$XDG_STATE_HOME/legible/worktrees/<repoId>/pr-<n>`, falling back to `~/.local/state/legible/worktrees/<repoId>/pr-<n>`. Inside the repo it pollutes `git status` and ignore rules.
+- **Reuse preserves the pinned head.** Preparing an existing registered worktree does not fetch or reset it. Updating to a newer PR head remains an explicit action.
+- **GC is required.** `git worktree prune` only clears stale entries. Clean up on submit, plus a 14-day TTL sweep on daemon start. Active, dirty, symlinked, and unregistered paths are never removed; cleanup does not use `--force`.
 - **One worktree is shared.** In subordinate mode both agents read the same tree. Both are read-only and each writes session state to its own `~/.claude` / `$CODEX_HOME`, so this is safe.
 
 ---

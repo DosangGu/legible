@@ -59,6 +59,23 @@ describe('daemon API', () => {
     expect(refreshed.json()).toMatchObject({ status: 'ready' })
   })
 
+  it('keeps serving when the best-effort startup worktree sweep fails', async () => {
+    const runner: CommandRunner = {
+      async run(_command, args): Promise<CommandResult> {
+        if (args.includes('rev-parse')) {
+          return { status: 'completed', exitCode: 128, stdout: '', stderr: 'not a repository' }
+        }
+        return { status: 'completed', exitCode: 0, stdout: 'version 1', stderr: '' }
+      },
+    }
+
+    const runtime = await makeRuntime(runner)
+    const health = await runtime.app.inject({ method: 'GET', url: '/api/health' })
+
+    expect(health.statusCode).toBe(200)
+    expect(health.json()).toMatchObject({ status: 'ready' })
+  })
+
   it('creates a snapshot and broadcasts ordered registry and preflight events', async () => {
     const runtime = await makeRuntime()
     const snapshot = createSnapshotEvent(
