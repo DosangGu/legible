@@ -220,7 +220,7 @@ type AgentEvent =
   | { type: 'tool_call'; name: string; input: unknown }
   | { type: 'tool_result'; name: string; output: unknown }
   | { type: 'turn_completed'; usage?: Usage; costUsd?: number }
-  | { type: 'error'; retryable: boolean; category: string }
+  | { type: 'error'; retryable: boolean; category: string; message?: string }
 
 interface AgentSession {
   send(msg: string): AsyncIterable<AgentEvent>
@@ -276,15 +276,27 @@ A single knob hides several rules. **Keep an explicit mapping table in the adapt
 
 | Knob | Claude Code | Codex |
 |---|---|---|
-| `shell: none` | `--allowedTools "Read,Glob,Grep"` | `--sandbox read-only` + minimal execpolicy |
-| `shell: git` | `+ Bash(git log *)`, `Bash(git blame *)`, `Bash(git show *)`, `Bash(git diff *)` | same prefixes in execpolicy |
-| `shell: broad` | additional rules | additional rules |
-| `network: off` | WebFetch/WebSearch not allowed | network access off |
-| `network: fetch` | `+ WebFetch,WebSearch` | network access on |
+| `shell: none` | `--allowedTools "Read,Glob,Grep"` | stable read-only sandbox + shell tool off |
+| `shell: git` | `+ Bash(git log *)`, `Bash(git blame *)`, `Bash(git show *)`, `Bash(git diff *)` | same as `broad` in the first adapter |
+| `shell: broad` | additional rules | shell tool on inside the read-only sandbox |
+| `network: off` | WebFetch/WebSearch not allowed | command network off + web search disabled |
+| `network: fetch` | `+ WebFetch,WebSearch` | command network off + live web search |
+| `network: free` | additional rules | command network on + live web search |
 | `onOutOfScope: deny` | deny mode | auto-reject approvals |
-| `onOutOfScope: ask` | surface approval in chat | route inbound approval to UI |
+| `onOutOfScope: ask` | surface approval in chat | deferred until approval UI exists |
 
 File writes are **pinned off.** Do not expose them as a knob.
+
+Codex's command rules control commands that request to run outside the sandbox; they are not an
+in-sandbox executable allowlist. The first adapter therefore maps `shell: git` to the same behavior
+as `broad` instead of presenting a false security boundary. Stable read-only mode blocks writes but
+does not restrict reads to the review worktree. A scoped permission profile can replace it later
+when that beta API is mature enough to require.
+
+Start Codex projects as untrusted, disable apps and subagents, and disable every user or
+plugin-provided MCP server through per-thread configuration. Preserve the real `CODEX_HOME` for
+authentication, but never write its configuration. Use ephemeral app-server threads so review
+sessions do not enter the user's Codex history.
 
 In `--allowedTools` prefix matching, **the space in `Bash(git log *)` matters.** `Bash(git log*)` would also match `git log-something`.
 
@@ -541,15 +553,18 @@ Riskiest first. **Follow the order.**
 | 1 | Daemon skeleton | WebSocket event bus, session registry, preflight. Hardcode the repo path |
 | 2 | Worktree lifecycle | Create/reuse/GC. Messy, so hit it early |
 | 3 | **Diff parsing + viewer** | Largest single chunk of v0. CodeMirror decorations + inline widgets. Half the time goes here |
-| 4 | Claude adapter + main chat | Stream parsing, permission knobs, event normalization |
-| 5 | Comment array + persistence + submit | Including head SHA display |
-| 6 | MCP tools + per-item chats | `itemId` routing |
-| 7 | Codex adapter + subordinate mode | After the adapter interface has found its shape in steps 3–6 |
-| 8 | Shell | Browser, repo registration, PR list, recent items, token auth. Easiest and lowest risk |
+| 4 | Codex adapter core | Stateful app-server transport, permission knobs, event normalization |
+| 5 | Codex main chat | HTTP/WebSocket lifecycle and streamed UI |
+| 6 | Comment array + persistence + submit | Including head SHA display |
+| 7 | MCP tools + per-item chats | `itemId` routing |
+| 8 | Claude adapter + subordinate mode | Deferred until the authentication and distribution path is settled |
+| 9 | Shell | Browser, repo registration, PR list, recent items, token auth. Easiest and lowest risk |
 
 **Step 3 will take twice as long as expected.** A diff viewer with inline widgets is universally underestimated until you build one. If it stalls, dropping side-by-side and shipping unified only is the escape hatch.
 
-**Do not pull the second backend or the profile knobs forward.** Leave a slot for the adapter interface, get through step 3 with Claude alone, then plug in Codex. That reaches dual review faster than doing both up front.
+Keep the adapter core separate from its HTTP/WebSocket and UI integration. Prove the stateful Codex
+contract first, wire the main chat second, and add the second backend only after the first backend's
+session lifecycle has settled.
 
 ---
 

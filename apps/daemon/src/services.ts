@@ -1,5 +1,8 @@
 import type { PreflightReport } from '@legible/protocol'
 
+import { CodexBackend } from './agents/codex/backend.js'
+import type { AppServerProcessFactory } from './agents/codex/app-server-client.js'
+import type { AgentBackend } from './agents/types.js'
 import { SessionFileService } from './diffs/file-service.js'
 import { NodeGitFileSource, type FileSource } from './diffs/file-source.js'
 import { SessionDiffService } from './diffs/service.js'
@@ -12,6 +15,9 @@ import { WorktreeService } from './worktrees/service.js'
 
 export type DaemonServices = {
   repoPath: string
+  agents: {
+    codex: AgentBackend
+  }
   eventBus: EventBus
   diffs: SessionDiffService
   files: SessionFileService
@@ -29,6 +35,7 @@ export type CreateServicesOptions = {
   worktreeTtlMs?: number
   now?: () => Date
   onListenerError?: (error: unknown) => void
+  codexProcessFactory?: AppServerProcessFactory
 }
 
 export function createDaemonServices(options: CreateServicesOptions): DaemonServices {
@@ -54,9 +61,13 @@ export function createDaemonServices(options: CreateServicesOptions): DaemonServ
     ...(options.worktreeTtlMs !== undefined ? { ttlMs: options.worktreeTtlMs } : {}),
     ...(options.now ? { now: options.now } : {}),
   })
+  const codex = new CodexBackend({
+    ...(options.codexProcessFactory ? { processFactory: options.codexProcessFactory } : {}),
+  })
 
   return {
     repoPath: options.repoPath,
+    agents: { codex },
     diffs,
     eventBus,
     files,
