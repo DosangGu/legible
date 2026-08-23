@@ -7,6 +7,7 @@ import type {
   DaemonHealth,
   DaemonSnapshot,
   DiffSide,
+  SubmitReviewRequest,
 } from '@legible/protocol'
 
 import {
@@ -24,6 +25,14 @@ import {
 import { ReviewFileNotFoundError, ReviewFileUnavailableError } from '../diffs/file-service.js'
 import { DiffUnavailableError } from '../diffs/service.js'
 import type { DaemonServices } from '../services.js'
+import {
+  InvalidSubmissionError,
+  StaleHeadError,
+  SubmissionAlreadyStartedError,
+  SubmissionBusyError,
+  SubmissionGitHubError,
+  SubmissionSessionNotFoundError,
+} from '../submissions/service.js'
 
 export type BuildAppOptions = {
   services: DaemonServices
@@ -56,6 +65,47 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   app.post('/api/preflight/refresh', async () => options.services.preflight.refresh())
 
   app.get('/api/sessions', async () => options.services.sessions.list())
+
+  app.get<{ Params: { sessionId: string } }>('/api/sessions/:sessionId', async (request, reply) => {
+    const session = options.services.sessions.get(request.params.sessionId)
+    if (session) return session
+    const response: ApiError = {
+      error: { code: 'session_not_found', message: 'Review session not found' },
+    }
+    return reply.code(404).send(response)
+  })
+
+  app.post<{
+    Params: { sessionId: string }
+    Body: { event?: unknown; body?: unknown; allowStaleHead?: unknown }
+  }>('/api/sessions/:sessionId/submission', async (request) => {
+    const body = request.body
+    if (
+      (body?.event !== 'COMMENT' &&
+        body?.event !== 'REQUEST_CHANGES' &&
+        body?.event !== 'APPROVE') ||
+      (body.body !== undefined && typeof body.body !== 'string') ||
+      (body.allowStaleHead !== undefined && typeof body.allowStaleHead !== 'boolean')
+    ) {
+      throw new InvalidSubmissionError('A valid review event and body are required')
+    }
+    const submission: SubmitReviewRequest = {
+      event: body.event,
+      ...(body.body === undefined ? {} : { body: body.body }),
+      ...(body.allowStaleHead === undefined ? {} : { allowStaleHead: body.allowStaleHead }),
+    }
+    return options.services.submissions.submit(request.params.sessionId, submission)
+  })
+
+  app.post<{ Params: { sessionId: string } }>(
+    '/api/sessions/:sessionId/submission/reconcile',
+    (request) => options.services.submissions.reconcile(request.params.sessionId),
+  )
+
+  app.post<{ Params: { sessionId: string } }>(
+    '/api/sessions/:sessionId/submission/cleanup',
+    (request) => options.services.submissions.cleanup(request.params.sessionId),
+  )
 
   app.get<{ Params: { sessionId: string } }>('/api/sessions/:sessionId/comments', (request) =>
     options.services.comments.list(request.params.sessionId),
@@ -245,6 +295,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     if (commentError) return reply.code(commentError.status).send(commentError.body)
     const chatError = mapChatError(error)
     if (chatError) return reply.code(chatError.status).send(chatError.body)
+    const submissionError = mapSubmissionError(error)
+    if (submissionError) return reply.code(submissionError.status).send(submissionError.body)
     request.log.error(error)
     const response: ApiError = {
       error: { code: 'internal_error', message: 'Internal server error' },
@@ -253,6 +305,50 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   })
 
   return app
+}
+
+function mapSubmissionError(
+  error: unknown,
+): { status: 400 | 401 | 403 | 404 | 409 | 422 | 502; body: ApiError } | undefined {
+  if (error instanceof SubmissionSessionNotFoundError) {
+    return { status: 404, body: { error: { code: 'session_not_found', message: error.message } } }
+  }
+  if (error instanceof InvalidSubmissionError) {
+    return { status: 400, body: { error: { code: 'invalid_submission', message: error.message } } }
+  }
+  if (error instanceof SubmissionBusyError) {
+    return { status: 409, body: { error: { code: 'submission_busy', message: error.message } } }
+  }
+  if (error instanceof SubmissionAlreadyStartedError) {
+    return {
+      status: 409,
+      body: { error: { code: 'submission_already_started', message: error.message } },
+    }
+  }
+  if (error instanceof StaleHeadError) {
+    return {
+      status: 409,
+      body: {
+        error: {
+          code: 'stale_pr_head',
+          message: error.message,
+          details: {
+            pinnedHeadSha: error.pinnedHeadSha,
+            currentHeadSha: error.currentHeadSha,
+          },
+        },
+      },
+    }
+  }
+  if (error instanceof SubmissionGitHubError) {
+    const status =
+      error.status === 401 ? 401 : error.status === 403 ? 403 : error.status === 422 ? 422 : 502
+    return {
+      status,
+      body: { error: { code: 'github_submission_failed', message: error.message } },
+    }
+  }
+  return undefined
 }
 
 function mapCommentError(error: unknown): { status: 400 | 404; body: ApiError } | undefined {

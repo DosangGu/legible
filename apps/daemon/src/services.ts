@@ -10,12 +10,15 @@ import { NodeGitFileSource, type FileSource } from './diffs/file-source.js'
 import { SessionDiffService } from './diffs/service.js'
 import { NodeGitDiffSource, type DiffSource } from './diffs/source.js'
 import { EventBus } from './events/event-bus.js'
+import { OctokitGitHubClient, type GitHubClient } from './github/client.js'
 import { NodeCommandRunner, type CommandRunner } from './preflight/command-runner.js'
 import { PreflightService } from './preflight/service.js'
 import { SessionRegistry } from './sessions/session-registry.js'
 import { SessionPersistence } from './sessions/persistence.js'
+import { SessionMutationQueue } from './sessions/mutation-queue.js'
 import { SessionStore } from './sessions/store.js'
 import { WorktreeService } from './worktrees/service.js'
+import { SubmissionService } from './submissions/service.js'
 
 export type DaemonServices = {
   repoPath: string
@@ -30,6 +33,7 @@ export type DaemonServices = {
   preflight: PreflightService
   sessions: SessionRegistry
   persistence: SessionPersistence
+  submissions: SubmissionService
   worktrees: WorktreeService
 }
 
@@ -44,6 +48,7 @@ export type CreateServicesOptions = {
   onListenerError?: (error: unknown) => void
   codexProcessFactory?: AppServerProcessFactory
   codexBackend?: AgentBackend
+  githubClient?: GitHubClient
 }
 
 export function createDaemonServices(options: CreateServicesOptions): DaemonServices {
@@ -87,10 +92,22 @@ export function createDaemonServices(options: CreateServicesOptions): DaemonServ
     chats,
     eventBus,
   )
+  const mutations = new SessionMutationQueue()
   const comments = new CommentService(
     sessions,
     diffs,
     persistence,
+    mutations,
+    options.now ?? (() => new Date()),
+  )
+  const submissions = new SubmissionService(
+    sessions,
+    persistence,
+    mutations,
+    comments,
+    chats,
+    worktrees,
+    options.githubClient ?? new OctokitGitHubClient(runner),
     options.now ?? (() => new Date()),
   )
 
@@ -105,6 +122,7 @@ export function createDaemonServices(options: CreateServicesOptions): DaemonServ
     preflight,
     persistence,
     sessions,
+    submissions,
     worktrees,
   }
 }

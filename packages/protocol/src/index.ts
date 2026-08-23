@@ -4,7 +4,10 @@ export type {
   DraftComment,
   Repo,
   ReviewConfig,
+  ReviewEvent,
   ReviewSession,
+  ReviewSubmission,
+  SubmitReviewRequest,
   UpdateDraftCommentRequest,
 } from './model.js'
 export type {

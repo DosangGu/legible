@@ -11,6 +11,7 @@ import type { AgentBackend } from '../agents/types.js'
 import { GitFileSourceError, type FileSource } from '../diffs/file-source.js'
 import { GitDiffSourceError, type DiffSource } from '../diffs/source.js'
 import type { CommandResult, CommandRunner } from '../preflight/command-runner.js'
+import type { CreateGitHubReview, GitHubClient } from '../github/client.js'
 import { createDaemon, type DaemonRuntime } from '../server.js'
 import { ReadyCommandRunner, reviewSession } from '../testing/fixtures.js'
 
@@ -374,6 +375,52 @@ describe('daemon API', () => {
     })
     expect(removed.statusCode).toBe(204)
   })
+
+  it('submits a human review and returns its durable GitHub receipt', async () => {
+    let submitted: CreateGitHubReview | undefined
+    const github: GitHubClient = {
+      async getPullHead() {
+        return 'b'.repeat(40)
+      },
+      async createReview(input) {
+        submitted = input
+        return {
+          id: 91,
+          htmlUrl: 'https://github.com/owner/repo/pull/42#pullrequestreview-91',
+          body: input.body,
+          submittedAt: '2026-08-21T03:00:00.000Z',
+        }
+      },
+      async listReviews() {
+        return []
+      },
+    }
+    const runtime = await makeRuntime(
+      new ReadyCommandRunner(),
+      diffSourceFrom(exampleDiff),
+      undefined,
+      undefined,
+      github,
+    )
+    runtime.services.sessions.add(
+      reviewSession({ baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40) }),
+    )
+
+    const response = await runtime.app.inject({
+      method: 'POST',
+      url: '/api/sessions/session-1/submission',
+      payload: { event: 'COMMENT', body: 'Summary' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({
+      submission: { status: 'submitted', githubReviewId: 91 },
+    })
+    expect(submitted).toMatchObject({
+      commitId: 'b'.repeat(40),
+      body: 'Summary\n\n<!-- legible-review-session:session-1 -->',
+    })
+  })
 })
 
 async function makeRuntime(
@@ -381,6 +428,7 @@ async function makeRuntime(
   diffSource?: DiffSource,
   fileSource?: FileSource,
   codexBackend?: AgentBackend,
+  githubClient?: GitHubClient,
 ) {
   const stateDirectory = await mkdtemp(join(tmpdir(), 'legible-api-'))
   const runtime = await createDaemon({
@@ -390,6 +438,7 @@ async function makeRuntime(
     ...(diffSource ? { diffSource } : {}),
     ...(fileSource ? { fileSource } : {}),
     ...(codexBackend ? { codexBackend } : {}),
+    ...(githubClient ? { githubClient } : {}),
     stateDirectory,
     now: () => new Date('2026-08-21T03:00:00.000Z'),
   })

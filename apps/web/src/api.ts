@@ -7,6 +7,8 @@ import type {
   DiffDocument,
   DiffSide,
   ReviewFileContent,
+  ReviewSession,
+  SubmitReviewRequest,
 } from '@legible/protocol'
 
 export class ApiClientError extends Error {
@@ -14,10 +16,41 @@ export class ApiClientError extends Error {
     message: string,
     readonly status: number,
     readonly code: string,
+    readonly details?: Record<string, unknown>,
   ) {
     super(message)
     this.name = 'ApiClientError'
   }
+}
+
+export function fetchSession(sessionId: string, signal?: AbortSignal): Promise<ReviewSession> {
+  return request<ReviewSession>(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+    ...(signal ? { signal } : {}),
+  })
+}
+
+export function submitReview(
+  sessionId: string,
+  submission: SubmitReviewRequest,
+): Promise<ReviewSession> {
+  return request<ReviewSession>(`/api/sessions/${encodeURIComponent(sessionId)}/submission`, {
+    method: 'POST',
+    body: JSON.stringify(submission),
+  })
+}
+
+export function reconcileSubmission(sessionId: string): Promise<ReviewSession> {
+  return request<ReviewSession>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/submission/reconcile`,
+    { method: 'POST' },
+  )
+}
+
+export function cleanupSubmission(sessionId: string): Promise<ReviewSession> {
+  return request<ReviewSession>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/submission/cleanup`,
+    { method: 'POST' },
+  )
 }
 
 export async function fetchSessionDiff(
@@ -136,5 +169,6 @@ async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
     error?.error.message ?? `Request failed with status ${String(response.status)}`,
     response.status,
     error?.error.code ?? 'request_failed',
+    error?.error.details,
   )
 }

@@ -121,6 +121,7 @@ export class ChatService {
 
   startReview(sessionId: string): ChatCommandAccepted {
     const session = this.#session(sessionId)
+    assertDraft(session)
     const state = this.#state(session)
     this.#assertAvailable(state)
     if (state.active) throw new ChatBusyError('A chat turn is already active')
@@ -133,6 +134,7 @@ export class ChatService {
   send(sessionId: string, message: string): ChatCommandAccepted {
     const normalized = validateMessage(message)
     const session = this.#session(sessionId)
+    assertDraft(session)
     const state = this.#state(session)
     this.#assertAvailable(state)
     if (state.active) throw new ChatBusyError('A chat turn is already active')
@@ -141,6 +143,7 @@ export class ChatService {
 
   retry(sessionId: string): ChatCommandAccepted {
     const session = this.#session(sessionId)
+    assertDraft(session)
     const state = this.#state(session)
     this.#assertAvailable(state)
     if (state.active) throw new ChatBusyError('A chat turn is already active')
@@ -162,6 +165,27 @@ export class ChatService {
       ?.interrupt()
       .catch((error: unknown) => this.#finishWithError(session, state, error))
     return this.#accepted(sessionId, state, active.id)
+  }
+
+  isBusy(sessionId: string): boolean {
+    const session = this.#session(sessionId)
+    return Boolean(this.#states.get(session.id)?.active)
+  }
+
+  async seal(sessionId: string): Promise<void> {
+    const session = this.#session(sessionId)
+    const state = this.#states.get(session.id) ?? this.#createState(session)
+    if (state.active) throw new ChatBusyError('Wait for the active chat turn before submitting')
+    if (state.agent) await state.agent.close().catch(() => undefined)
+    state.agent = undefined
+    state.retry = undefined
+    state.snapshot.status = 'unavailable'
+    state.snapshot.unavailableReason = 'Review submitted'
+    delete state.snapshot.currentTurnId
+    this.#publish(session.id, state, {
+      type: 'status',
+      status: 'unavailable',
+    })
   }
 
   async close(): Promise<void> {
@@ -474,6 +498,10 @@ export class ChatService {
     this.#states.delete(sessionId)
     if (state?.agent) await state.agent.close().catch(() => undefined)
   }
+}
+
+function assertDraft(session: ReviewSession): void {
+  if (session.submission) throw new ChatUnavailableError('Review submission has already started')
 }
 
 function agentErrorMessage(event: Extract<AgentEvent, { type: 'error' }>): string {

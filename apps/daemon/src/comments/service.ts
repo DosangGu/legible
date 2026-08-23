@@ -10,6 +10,7 @@ import type {
 import type { SessionDiffService } from '../diffs/service.js'
 import type { SessionPersistence } from '../sessions/persistence.js'
 import type { SessionRegistry } from '../sessions/session-registry.js'
+import type { SessionMutationQueue } from '../sessions/mutation-queue.js'
 
 const maxBodyBytes = 64 * 1024
 
@@ -18,12 +19,11 @@ export class InvalidCommentError extends Error {}
 export class CommentSessionNotFoundError extends Error {}
 
 export class CommentService {
-  readonly #mutations = new Map<string, Promise<unknown>>()
-
   constructor(
     private readonly sessions: SessionRegistry,
     private readonly diffs: SessionDiffService,
     private readonly persistence: SessionPersistence,
+    private readonly mutations: SessionMutationQueue,
     private readonly now: () => Date = () => new Date(),
     private readonly idFactory: () => string = randomUUID,
   ) {}
@@ -35,8 +35,9 @@ export class CommentService {
   create(sessionId: string, request: CreateDraftCommentRequest): Promise<DraftComment> {
     return this.#serialize(sessionId, async () => {
       const session = this.#session(sessionId)
+      assertDraft(session)
       const body = validateBody(request.body)
-      const range = await this.#validateAnchor(session, request)
+      const range = await this.validateAnchor(session, request)
       const comment: DraftComment = {
         id: this.idFactory(),
         path: request.path,
@@ -63,6 +64,7 @@ export class CommentService {
   ): Promise<DraftComment> {
     return this.#serialize(sessionId, async () => {
       const session = this.#session(sessionId)
+      assertDraft(session)
       const index = session.comments.findIndex((comment) => comment.id === commentId)
       if (index < 0) throw new CommentNotFoundError('Draft comment not found')
       const updatedComment = { ...session.comments[index]!, body: validateBody(request.body) }
@@ -78,6 +80,7 @@ export class CommentService {
   remove(sessionId: string, commentId: string): Promise<void> {
     return this.#serialize(sessionId, async () => {
       const session = this.#session(sessionId)
+      assertDraft(session)
       const comments = session.comments.filter((comment) => comment.id !== commentId)
       if (comments.length === session.comments.length) {
         throw new CommentNotFoundError('Draft comment not found')
@@ -88,7 +91,7 @@ export class CommentService {
     })
   }
 
-  async #validateAnchor(
+  async validateAnchor(
     session: ReviewSession,
     request: CreateDraftCommentRequest,
   ): Promise<{ line: number; startLine?: number }> {
@@ -142,19 +145,12 @@ export class CommentService {
   }
 
   #serialize<T>(sessionId: string, mutation: () => Promise<T>): Promise<T> {
-    const previous = this.#mutations.get(sessionId) ?? Promise.resolve()
-    const next = previous.catch(() => undefined).then(mutation)
-    this.#mutations.set(sessionId, next)
-    void next.then(
-      () => {
-        if (this.#mutations.get(sessionId) === next) this.#mutations.delete(sessionId)
-      },
-      () => {
-        if (this.#mutations.get(sessionId) === next) this.#mutations.delete(sessionId)
-      },
-    )
-    return next
+    return this.mutations.run(sessionId, mutation)
   }
+}
+
+function assertDraft(session: ReviewSession): void {
+  if (session.submission) throw new InvalidCommentError('Review submission has already started')
 }
 
 function validateBody(body: string): string {

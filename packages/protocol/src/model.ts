@@ -15,7 +15,43 @@ export type ReviewSession = {
   worktreePath: string
   config: ReviewConfig
   comments: DraftComment[]
+  submission?: ReviewSubmission
   createdAt: string
+}
+
+export type ReviewEvent = 'COMMENT' | 'REQUEST_CHANGES' | 'APPROVE'
+
+export type ReviewSubmission =
+  | {
+      status: 'submitting' | 'uncertain'
+      event: ReviewEvent
+      body?: string
+      marker: string
+      startedAt: string
+      currentHeadSha: string
+      staleHead: boolean
+    }
+  | {
+      status: 'submitted'
+      event: ReviewEvent
+      body?: string
+      marker: string
+      startedAt: string
+      currentHeadSha: string
+      staleHead: boolean
+      githubReviewId: number
+      htmlUrl: string
+      submittedAt: string
+      cleanup: {
+        status: 'pending' | 'complete' | 'failed'
+        message?: string
+      }
+    }
+
+export type SubmitReviewRequest = {
+  event: ReviewEvent
+  body?: string
+  allowStaleHead?: boolean
 }
 
 export type DraftComment = {

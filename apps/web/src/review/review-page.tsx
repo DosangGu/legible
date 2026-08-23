@@ -1,8 +1,16 @@
-import type { DiffDocument, ReviewFileContent } from '@legible/protocol'
+import type { DiffDocument, ReviewEvent, ReviewFileContent, ReviewSession } from '@legible/protocol'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useParams } from 'react-router-dom'
 
-import { fetchReviewFile, fetchSessionDiff } from '../api.js'
+import {
+  ApiClientError,
+  cleanupSubmission,
+  fetchReviewFile,
+  fetchSession,
+  fetchSessionDiff,
+  reconcileSubmission,
+  submitReview,
+} from '../api.js'
 import { CodeView, type InlineWidget, type ScrollRequest } from './code-view.js'
 import { ChatPanel } from './chat-panel.js'
 import { DraftCommentCard, NewCommentComposer } from './inline-comments.js'
@@ -17,7 +25,7 @@ import {
 type DiffLoadState =
   | { key: string; status: 'loading' }
   | { key: string; status: 'error'; message: string }
-  | { key: string; status: 'ready'; diff: DiffDocument }
+  | { key: string; status: 'ready'; session: ReviewSession; diff?: DiffDocument }
 
 export function ReviewPage() {
   const { sessionId = '' } = useParams()
@@ -27,14 +35,22 @@ export function ReviewPage() {
 
   useEffect(() => {
     const controller = new AbortController()
-    void fetchSessionDiff(sessionId, controller.signal).then(
-      (diff) => setLoadedDiff({ key: requestKey, status: 'ready', diff }),
-      (error: unknown) => {
-        if (!controller.signal.aborted) {
-          setLoadedDiff({ key: requestKey, status: 'error', message: errorMessage(error) })
-        }
-      },
-    )
+    void fetchSession(sessionId, controller.signal)
+      .then(async (session) => ({
+        session,
+        ...(session.submission
+          ? {}
+          : { diff: await fetchSessionDiff(sessionId, controller.signal) }),
+      }))
+      .then(
+        ({ session, diff }) =>
+          setLoadedDiff({ key: requestKey, status: 'ready', session, ...(diff ? { diff } : {}) }),
+        (error: unknown) => {
+          if (!controller.signal.aborted) {
+            setLoadedDiff({ key: requestKey, status: 'error', message: errorMessage(error) })
+          }
+        },
+      )
     return () => controller.abort()
   }, [requestKey, sessionId])
 
@@ -55,14 +71,38 @@ export function ReviewPage() {
       </PageState>
     )
   }
-  if (diffState.diff.files.length === 0) {
+  if (diffState.session.submission) {
+    return (
+      <SubmissionPage
+        session={diffState.session}
+        onSessionChange={(session) => setLoadedDiff({ key: requestKey, status: 'ready', session })}
+        onDraftRestored={() => setRetry((value) => value + 1)}
+      />
+    )
+  }
+  if (!diffState.diff || diffState.diff.files.length === 0) {
     return <PageState title="No changes" detail="The pinned revisions have no diff." />
   }
 
-  return <ReviewWorkspace sessionId={sessionId} diff={diffState.diff} />
+  return (
+    <ReviewWorkspace
+      session={diffState.session}
+      diff={diffState.diff}
+      onSubmitted={(session) => setLoadedDiff({ key: requestKey, status: 'ready', session })}
+    />
+  )
 }
 
-function ReviewWorkspace({ sessionId, diff }: { sessionId: string; diff: DiffDocument }) {
+function ReviewWorkspace({
+  session,
+  diff,
+  onSubmitted,
+}: {
+  session: ReviewSession
+  diff: DiffDocument
+  onSubmitted(session: ReviewSession): void
+}) {
+  const sessionId = session.id
   const model = useMemo(() => buildDiffRenderModel(diff), [diff])
   const draftComments = useComments(sessionId)
   const [selectedFileIndex, setSelectedFileIndex] = useState(0)
@@ -75,6 +115,7 @@ function ReviewWorkspace({ sessionId, diff }: { sessionId: string; diff: DiffDoc
   const [commentRange, setCommentRange] = useState<CommentRange>()
   const [commentBody, setCommentBody] = useState('')
   const [commentError, setCommentError] = useState<string>()
+  const [submitting, setSubmitting] = useState(false)
   const selectedFile = selectedDiffFile(diff, selectedFileIndex)
   const target = defaultFileTarget(selectedFile)
   const targetSha = target.side === 'RIGHT' ? diff.headSha : diff.baseSha
@@ -253,8 +294,20 @@ function ReviewWorkspace({ sessionId, diff }: { sessionId: string; diff: DiffDoc
           <span className="additions">+{String(diff.additions)}</span>
           <span className="deletions">−{String(diff.deletions)}</span>
           <span>{String(draftComments.comments.length)} drafts</span>
+          <button className="primary-button" type="button" onClick={() => setSubmitting(true)}>
+            Submit review
+          </button>
         </div>
       </header>
+
+      {submitting && (
+        <SubmitReviewDialog
+          session={session}
+          draftCount={draftComments.comments.length}
+          onClose={() => setSubmitting(false)}
+          onSubmitted={onSubmitted}
+        />
+      )}
 
       <div className={chatCollapsed ? 'review-body chat-is-collapsed' : 'review-body'}>
         <aside className="file-sidebar" aria-label="Changed files">
@@ -328,6 +381,197 @@ function ReviewWorkspace({ sessionId, diff }: { sessionId: string; diff: DiffDoc
       </div>
     </main>
   )
+}
+
+function SubmitReviewDialog({
+  session,
+  draftCount,
+  onClose,
+  onSubmitted,
+}: {
+  session: ReviewSession
+  draftCount: number
+  onClose(): void
+  onSubmitted(session: ReviewSession): void
+}) {
+  const [event, setEvent] = useState<ReviewEvent>('COMMENT')
+  const [body, setBody] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string>()
+  const [stale, setStale] = useState<{ pinned: string; current: string }>()
+  const bodyRequired = event === 'COMMENT' || event === 'REQUEST_CHANGES'
+
+  const submit = async (allowStaleHead = false) => {
+    setSaving(true)
+    setError(undefined)
+    try {
+      onSubmitted(
+        await submitReview(session.id, {
+          event,
+          ...(body.trim() ? { body } : {}),
+          ...(allowStaleHead ? { allowStaleHead: true } : {}),
+        }),
+      )
+    } catch (caught) {
+      if (caught instanceof ApiClientError && caught.code === 'stale_pr_head') {
+        setStale({
+          pinned: String(caught.details?.pinnedHeadSha ?? session.headSha),
+          current: String(caught.details?.currentHeadSha ?? 'unknown'),
+        })
+      } else {
+        setError(errorMessage(caught))
+      }
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section
+        className="submit-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="submit-title"
+      >
+        <h2 id="submit-title">Submit review</h2>
+        <p>
+          {String(draftCount)} inline drafts · pinned <code>{session.headSha}</code>
+        </p>
+        <fieldset disabled={saving}>
+          <legend>Review decision</legend>
+          {(['COMMENT', 'APPROVE', 'REQUEST_CHANGES'] as const).map((value) => (
+            <label key={value}>
+              <input
+                type="radio"
+                name="review-event"
+                value={value}
+                checked={event === value}
+                onChange={() => {
+                  setEvent(value)
+                  setStale(undefined)
+                }}
+              />
+              {reviewEventLabel(value)}
+            </label>
+          ))}
+        </fieldset>
+        <label className="submit-body-label">
+          Review summary{bodyRequired ? ' (required)' : ''}
+          <textarea
+            aria-label="Review summary"
+            maxLength={64 * 1024}
+            value={body}
+            disabled={saving}
+            onChange={(change) => {
+              setBody(change.target.value)
+              setStale(undefined)
+            }}
+          />
+        </label>
+        {stale && (
+          <div className="submit-warning">
+            PR HEAD changed from <code>{stale.pinned}</code> to <code>{stale.current}</code>. You
+            can still submit against the pinned revision.
+          </div>
+        )}
+        {error && <div className="submit-error">{error}</div>}
+        <div className="submit-actions">
+          <button type="button" disabled={saving} onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={saving || (bodyRequired && !body.trim())}
+            onClick={() => void submit(Boolean(stale))}
+          >
+            {saving ? 'Submitting…' : stale ? 'Submit pinned review anyway' : 'Submit review'}
+          </button>
+        </div>
+      </section>
+    </div>
+  )
+}
+
+function SubmissionPage({
+  session,
+  onSessionChange,
+  onDraftRestored,
+}: {
+  session: ReviewSession
+  onSessionChange(session: ReviewSession): void
+  onDraftRestored(): void
+}) {
+  const submission = session.submission!
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string>()
+
+  const run = async (operation: () => Promise<ReviewSession>) => {
+    setBusy(true)
+    setError(undefined)
+    try {
+      const updated = await operation()
+      if (!updated.submission) onDraftRestored()
+      else onSessionChange(updated)
+    } catch (caught) {
+      setError(errorMessage(caught))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (submission.status !== 'submitted') {
+    return (
+      <PageState
+        title="Submission result unknown"
+        detail="Check GitHub for the hidden session marker before allowing another submission."
+      >
+        <button
+          className="primary-button"
+          type="button"
+          disabled={busy}
+          onClick={() => void run(() => reconcileSubmission(session.id))}
+        >
+          {busy ? 'Checking…' : 'Reconcile with GitHub'}
+        </button>
+        {error ? <p>{error}</p> : null}
+      </PageState>
+    )
+  }
+
+  return (
+    <PageState
+      title="Review submitted"
+      detail={`${reviewEventLabel(submission.event)} · ${submission.submittedAt}`}
+    >
+      <a className="primary-button" href={submission.htmlUrl} target="_blank" rel="noreferrer">
+        Open on GitHub
+      </a>
+      {submission.staleHead ? <p>Submitted against the pinned, older HEAD.</p> : null}
+      {submission.cleanup.status === 'failed' ? (
+        <>
+          <p>Worktree cleanup failed: {submission.cleanup.message}</p>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void run(() => cleanupSubmission(session.id))}
+          >
+            {busy ? 'Cleaning…' : 'Retry cleanup'}
+          </button>
+        </>
+      ) : (
+        <p>Worktree cleanup {submission.cleanup.status}.</p>
+      )}
+      {error ? <p>{error}</p> : null}
+    </PageState>
+  )
+}
+
+function reviewEventLabel(event: ReviewEvent): string {
+  if (event === 'APPROVE') return 'Approve'
+  if (event === 'REQUEST_CHANGES') return 'Request changes'
+  return 'Comment'
 }
 
 type CommentRange = { start: DiffAnchor; end: DiffAnchor }

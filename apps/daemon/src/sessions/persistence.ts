@@ -92,7 +92,7 @@ export class SessionPersistence {
       if (!session) return
       const chat = this.chats.exportState(sessionId)
       await this.store.save({
-        version: 1,
+        version: 2,
         session,
         ...(chat ? { chat } : {}),
       })

@@ -8,7 +8,7 @@ import type { ReviewSession } from '@legible/protocol'
 import type { PersistedChatState } from '../chats/service.js'
 
 export type PersistedSessionRecord = {
-  version: 1
+  version: 2
   session: ReviewSession
   chat?: PersistedChatState
 }
@@ -80,14 +80,14 @@ export class SessionStore {
 function validateRecord(value: unknown, path: string): PersistedSessionRecord {
   if (
     !isRecord(value) ||
-    value.version !== 1 ||
+    (value.version !== 1 && value.version !== 2) ||
     !isReviewSession(value.session) ||
     (value.chat !== undefined && !isPersistedChat(value.chat))
   ) {
     throw new SessionStoreError(`Invalid or unsupported session file: ${path}`)
   }
   safeId(value.session.id)
-  return value as PersistedSessionRecord
+  return { ...(value as PersistedSessionRecord), version: 2 }
 }
 
 function isReviewSession(value: unknown): value is ReviewSession {
@@ -106,7 +106,35 @@ function isReviewSession(value: unknown): value is ReviewSession {
     typeof value.headSha === 'string' &&
     typeof value.baseSha === 'string' &&
     typeof value.worktreePath === 'string' &&
-    typeof value.createdAt === 'string'
+    typeof value.createdAt === 'string' &&
+    (value.submission === undefined || isReviewSubmission(value.submission))
+  )
+}
+
+function isReviewSubmission(value: unknown): boolean {
+  if (
+    !isRecord(value) ||
+    (value.status !== 'submitting' &&
+      value.status !== 'uncertain' &&
+      value.status !== 'submitted') ||
+    (value.event !== 'COMMENT' && value.event !== 'REQUEST_CHANGES' && value.event !== 'APPROVE') ||
+    typeof value.marker !== 'string' ||
+    typeof value.startedAt !== 'string' ||
+    typeof value.currentHeadSha !== 'string' ||
+    typeof value.staleHead !== 'boolean' ||
+    (value.body !== undefined && typeof value.body !== 'string')
+  )
+    return false
+  if (value.status !== 'submitted') return true
+  return (
+    typeof value.githubReviewId === 'number' &&
+    typeof value.htmlUrl === 'string' &&
+    typeof value.submittedAt === 'string' &&
+    isRecord(value.cleanup) &&
+    (value.cleanup.status === 'pending' ||
+      value.cleanup.status === 'complete' ||
+      value.cleanup.status === 'failed') &&
+    (value.cleanup.message === undefined || typeof value.cleanup.message === 'string')
   )
 }
 

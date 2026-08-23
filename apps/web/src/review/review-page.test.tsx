@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
-import type { ChatSnapshot } from '@legible/protocol'
+import type { ChatSnapshot, ReviewSession } from '@legible/protocol'
 
 import { App } from '../app.js'
 import { diffDocument } from '../testing/fixtures.js'
@@ -34,6 +34,7 @@ describe('ReviewPage', () => {
   it('renders a diff, selects an anchor, and loads the whole file', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = String(input)
+      if (url === '/api/sessions/session-1') return jsonResponse(webSession())
       if (url.endsWith('/chat')) return jsonResponse(emptyChat())
       if (url.includes('/file?')) {
         return jsonResponse({
@@ -66,7 +67,9 @@ describe('ReviewPage', () => {
   it('shows a stable API error and retries', async () => {
     let diffAttempt = 0
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
-      if (String(input).endsWith('/chat')) return jsonResponse(emptyChat())
+      const url = String(input)
+      if (url === '/api/sessions/session-1') return jsonResponse(webSession())
+      if (url.endsWith('/chat')) return jsonResponse(emptyChat())
       diffAttempt += 1
       if (diffAttempt === 1) {
         return jsonResponse(
@@ -91,7 +94,9 @@ describe('ReviewPage', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn((input: string | URL | Request) => {
-        if (String(input).endsWith('/chat')) return Promise.resolve(jsonResponse(emptyChat()))
+        const url = String(input)
+        if (url === '/api/sessions/session-1') return Promise.resolve(jsonResponse(webSession()))
+        if (url.endsWith('/chat')) return Promise.resolve(jsonResponse(emptyChat()))
         return new Promise<Response>((resolve) => {
           resolveResponse = resolve
         })
@@ -101,6 +106,7 @@ describe('ReviewPage', () => {
     renderReview()
     expect(screen.getByRole('heading', { name: 'Loading review…' })).toBeTruthy()
 
+    await waitFor(() => expect(resolveResponse).toBeTypeOf('function'))
     resolveResponse(jsonResponse({ ...diffDocument(), files: [], additions: 0, deletions: 0 }))
     expect(await screen.findByRole('heading', { name: 'No changes' })).toBeTruthy()
   })
@@ -109,6 +115,7 @@ describe('ReviewPage', () => {
     let chat = emptyChat()
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input)
+      if (url === '/api/sessions/session-1') return jsonResponse(webSession())
       if (url.endsWith('/diff')) return jsonResponse(diffDocument())
       if (url.endsWith('/chat/start') && init?.method === 'POST') {
         chat = {
@@ -168,6 +175,7 @@ describe('ReviewPage', () => {
       'fetch',
       vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
         const url = String(input)
+        if (url === '/api/sessions/session-1') return jsonResponse(webSession())
         if (url.endsWith('/diff')) return jsonResponse(diffDocument())
         if (url.endsWith('/chat')) return jsonResponse(emptyChat())
         if (url.endsWith('/comments') && init?.method === 'POST') {
@@ -204,6 +212,76 @@ describe('ReviewPage', () => {
       line: 3,
     })
   })
+
+  it('warns about a stale head, submits on confirmation, and shows the receipt', async () => {
+    const submissions: Record<string, unknown>[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input)
+        if (url === '/api/sessions/session-1') return jsonResponse(webSession())
+        if (url.endsWith('/diff')) return jsonResponse(diffDocument())
+        if (url.endsWith('/chat')) return jsonResponse(emptyChat())
+        if (url.endsWith('/comments')) return jsonResponse([])
+        if (url.endsWith('/submission') && init?.method === 'POST') {
+          const body = JSON.parse(String(init.body)) as Record<string, unknown>
+          submissions.push(body)
+          if (!body.allowStaleHead) {
+            return jsonResponse(
+              {
+                error: {
+                  code: 'stale_pr_head',
+                  message: 'The pull request HEAD has changed',
+                  details: {
+                    pinnedHeadSha: 'b'.repeat(40),
+                    currentHeadSha: 'c'.repeat(40),
+                  },
+                },
+              },
+              409,
+            )
+          }
+          return jsonResponse(
+            webSession({
+              submission: {
+                status: 'submitted',
+                event: 'COMMENT',
+                body: 'Looks good overall',
+                marker: '<!-- legible-review-session:session-1 -->',
+                startedAt: '2026-08-23T00:00:00.000Z',
+                currentHeadSha: 'c'.repeat(40),
+                staleHead: true,
+                githubReviewId: 91,
+                htmlUrl: 'https://github.com/owner/repo/pull/42#pullrequestreview-91',
+                submittedAt: '2026-08-23T00:00:01.000Z',
+                cleanup: { status: 'complete' },
+              },
+            }),
+          )
+        }
+        throw new Error(`Unexpected request: ${url}`)
+      }),
+    )
+    const user = userEvent.setup()
+    renderReview()
+
+    await user.click(await screen.findByRole('button', { name: 'Submit review' }))
+    const dialog = screen.getByRole('dialog')
+    await user.type(
+      within(dialog).getByRole('textbox', { name: 'Review summary' }),
+      'Looks good overall',
+    )
+    await user.click(within(dialog).getByRole('button', { name: 'Submit review' }))
+    expect(await within(dialog).findByText(/PR HEAD changed/)).toBeTruthy()
+    await user.click(within(dialog).getByRole('button', { name: 'Submit pinned review anyway' }))
+
+    expect(await screen.findByRole('heading', { name: 'Review submitted' })).toBeTruthy()
+    expect(submissions).toEqual([
+      { event: 'COMMENT', body: 'Looks good overall' },
+      { event: 'COMMENT', body: 'Looks good overall', allowStaleHead: true },
+    ])
+    expect(screen.getByRole('link', { name: 'Open on GitHub' })).toBeTruthy()
+  })
 })
 
 function renderReview() {
@@ -228,5 +306,27 @@ function emptyChat(): ChatSnapshot {
     status: 'idle' as const,
     backend: 'codex' as const,
     entries: [],
+  }
+}
+
+function webSession(overrides: Partial<ReviewSession> = {}): ReviewSession {
+  return {
+    id: 'session-1',
+    repoId: 'owner/repo',
+    prNumber: 42,
+    headSha: 'b'.repeat(40),
+    baseSha: 'a'.repeat(40),
+    worktreePath: '/state/worktrees/owner/repo/pr-42',
+    config: {
+      main: {
+        backend: 'codex',
+        shell: 'git',
+        network: 'fetch',
+        onOutOfScope: 'deny',
+      },
+    },
+    comments: [],
+    createdAt: '2026-08-22T00:00:00.000Z',
+    ...overrides,
   }
 }

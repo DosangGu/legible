@@ -4,6 +4,7 @@ import type { FileSource } from './diffs/file-source.js'
 import type { DiffSource } from './diffs/source.js'
 import type { CommandRunner } from './preflight/command-runner.js'
 import type { AgentBackend } from './agents/types.js'
+import type { GitHubClient } from './github/client.js'
 import { buildApp } from './api/app.js'
 import { createDaemonServices, type DaemonServices } from './services.js'
 
@@ -23,6 +24,7 @@ export type StartDaemonOptions = {
   worktreeTtlMs?: number
   now?: () => Date
   codexBackend?: AgentBackend
+  githubClient?: GitHubClient
 }
 
 export type DaemonRuntime = {
@@ -40,9 +42,15 @@ export async function createDaemon(options: StartDaemonOptions): Promise<DaemonR
     ...(options.worktreeTtlMs !== undefined ? { worktreeTtlMs: options.worktreeTtlMs } : {}),
     ...(options.now ? { now: options.now } : {}),
     ...(options.codexBackend ? { codexBackend: options.codexBackend } : {}),
+    ...(options.githubClient ? { githubClient: options.githubClient } : {}),
   })
   await services.persistence.restore()
   await services.preflight.refresh()
+  for (const session of services.sessions.list()) {
+    if (session.submission?.status === 'submitting' || session.submission?.status === 'uncertain') {
+      await services.submissions.reconcile(session.id).catch(() => undefined)
+    }
+  }
 
   const app = await buildApp({
     services,
