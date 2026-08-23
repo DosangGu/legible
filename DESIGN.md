@@ -273,7 +273,18 @@ Parallel mode (both propose independently, human merges) can be added later sinc
 
 Inject knobs as spawn-time arguments. Codex takes `--config key=value`; Claude takes JSON directly via `--settings`.
 
-**Trap:** pointing Codex at a dedicated `CODEX_HOME` for isolation also removes its authentication, which lives there. You must use the real CODEX_HOME and override with `--config`. Claude's `--bare` has the same structure — bare mode does not read OAuth credentials, so it needs `ANTHROPIC_API_KEY`. On both sides you get a clean environment or subscription auth, not both.
+### Authentication
+
+Delegate authentication to the locally installed official CLIs. Preflight runs `claude auth status`
+and `codex login status`; users sign in with `claude auth login` and `codex login`. Subscription or
+API billing is a CLI concern that remains opaque to Legible. Never read, copy, store, refresh, or
+return agent credentials. Agent subprocesses inherit the user's authentication environment and
+configuration, while review behavior is constrained with spawn-time arguments.
+
+The Claude adapter must invoke the local `claude` executable through its supported headless/stateful
+interface, just as the Codex adapter invokes local `codex app-server`. Do not point either tool at an
+empty synthetic home for isolation: that also removes CLI-owned authentication. Never read OAuth
+credentials from `~/.claude` or `$CODEX_HOME` and call vendor APIs directly.
 
 ### Knob → backend mapping
 
@@ -370,7 +381,9 @@ Rules:
 - Surface it prominently in the UI. PRs that change hooks or MCP config are rare, and exactly the kind a human should look at
 - The change still renders normally in the diff view, which reads from git objects and is unaffected by worktree manipulation
 
-`--bare` skips all this auto-discovery, but bare mode cannot use subscription auth (same trade-off as §6) and discards skills and guidance along with it, defeating the purpose of this section. Restoring the base version is the more precise fix.
+`--safe-mode` skips this auto-discovery while preserving CLI-owned authentication, but it also
+discards skills and guidance, defeating the purpose of this section. Restoring the base version is
+the more precise fix.
 
 Ship this in v0. Retrofitting means reopening the worktree creation path.
 

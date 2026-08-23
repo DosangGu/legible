@@ -126,7 +126,7 @@ export class PreflightService {
       authResult.status === 'timed_out'
         ? 'Authentication check timed out'
         : status === 'unauthenticated'
-          ? 'Authentication required'
+          ? authenticationHint(definition.tool)
           : 'Authentication check failed'
 
     return version
@@ -138,6 +138,12 @@ export class PreflightService {
     const [executable, ...args] = command
     return this.runner.run(executable, args, { timeoutMs: commandTimeoutMs })
   }
+}
+
+function authenticationHint(tool: PreflightTool): string {
+  if (tool === 'claude') return 'Authentication required; run claude auth login'
+  if (tool === 'codex') return 'Authentication required; run codex login'
+  return 'Authentication required'
 }
 
 function failureForVersion(tool: PreflightTool, result: CommandResult): PreflightCheck {

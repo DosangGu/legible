@@ -42,7 +42,18 @@ the status API from starting.
 
 Open `/review/:sessionId` in the web app to view a unified, read-only CodeMirror diff. Changed-file
 navigation, left/right line anchors, whole-file context, loading, empty, binary, and API error states
-are available; comment authoring and submission arrive in later milestones.
+are available alongside inline drafts, review submission, and main/per-comment Codex chats.
+
+Legible delegates authentication to the locally installed agent CLIs. Sign in before starting the
+daemon:
+
+```bash
+claude auth login
+codex login
+```
+
+Preflight checks `claude auth status` and `codex login status`. Subscription or API billing is chosen
+inside each official CLI; Legible never reads or stores agent credentials.
 
 The daemon also owns the internal PR worktree lifecycle. It creates detached worktrees outside
 the checkout, reuses their pinned commits, refuses destructive cleanup of dirty or unknown paths,

@@ -20,6 +20,7 @@ describe('PreflightService', () => {
       status: 'ready',
       version: 'git version 1.0.0',
     })
+    expect(report.checks.map(({ tool }) => tool)).toEqual(['git', 'gh', 'claude', 'codex'])
     expect(JSON.stringify(report)).not.toContain('authenticated@example.com')
   })
 
@@ -51,6 +52,7 @@ describe('PreflightService', () => {
       'error',
       'error',
     ])
+    expect(report.checks[1]?.message).toBe('Authentication required')
     expect(JSON.stringify(report)).not.toContain('secret')
     expect(() => service.assertReady()).toThrow(PreflightNotReadyError)
   })
@@ -77,5 +79,30 @@ describe('PreflightService', () => {
 
     expect(runner.run).toHaveBeenCalledTimes(7)
     expect(onUpdated).toHaveBeenCalledOnce()
+  })
+
+  it('reports agent-specific local CLI login guidance', async () => {
+    const runner: CommandRunner = {
+      run: vi.fn(async (_command, args) =>
+        args.includes('status')
+          ? { status: 'completed', exitCode: 1, stdout: 'private account', stderr: '' }
+          : { status: 'completed', exitCode: 0, stdout: 'version 1', stderr: '' },
+      ),
+    }
+    const service = new PreflightService(runner)
+
+    const report = await service.refresh()
+
+    expect(report.checks[2]).toMatchObject({
+      tool: 'claude',
+      status: 'unauthenticated',
+      message: 'Authentication required; run claude auth login',
+    })
+    expect(report.checks[3]).toMatchObject({
+      tool: 'codex',
+      status: 'unauthenticated',
+      message: 'Authentication required; run codex login',
+    })
+    expect(JSON.stringify(report)).not.toContain('private account')
   })
 })
