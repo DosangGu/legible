@@ -19,6 +19,7 @@ import { SessionPersistence } from './sessions/persistence.js'
 import { SessionMutationQueue } from './sessions/mutation-queue.js'
 import { SessionStore } from './sessions/store.js'
 import { WorktreeService } from './worktrees/service.js'
+import { WorktreeConfigProjection } from './worktrees/config-projection.js'
 import { SubmissionService } from './submissions/service.js'
 
 export type DaemonServices = {
@@ -36,6 +37,7 @@ export type DaemonServices = {
   sessions: SessionRegistry
   persistence: SessionPersistence
   submissions: SubmissionService
+  configProjection: WorktreeConfigProjection
   worktrees: WorktreeService
 }
 
@@ -76,6 +78,10 @@ export function createDaemonServices(options: CreateServicesOptions): DaemonServ
     ...(options.stateDirectory ? { stateDirectory: options.stateDirectory } : {}),
     ...(options.worktreeTtlMs !== undefined ? { ttlMs: options.worktreeTtlMs } : {}),
     ...(options.now ? { now: options.now } : {}),
+  })
+  const configProjection = new WorktreeConfigProjection({
+    runner,
+    ...(options.stateDirectory ? { stateDirectory: options.stateDirectory } : {}),
   })
   const codex =
     options.codexBackend ??
@@ -142,6 +148,7 @@ export function createDaemonServices(options: CreateServicesOptions): DaemonServ
     persistence,
     sessions,
     submissions,
+    configProjection,
     worktrees,
   }
 }

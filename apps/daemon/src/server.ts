@@ -46,6 +46,7 @@ export async function createDaemon(options: StartDaemonOptions): Promise<DaemonR
     ...(options.githubClient ? { githubClient: options.githubClient } : {}),
     mcpOrigin: `http://127.0.0.1:${String(requestedPort)}`,
   })
+  const configRecovery = await services.configProjection.recover()
   await services.persistence.restore()
   await services.preflight.refresh()
   for (const session of services.sessions.list()) {
@@ -61,6 +62,22 @@ export async function createDaemon(options: StartDaemonOptions): Promise<DaemonR
     ...(options.now ? { now: options.now } : {}),
   })
   await app.ready()
+
+  if (configRecovery.conflicts.length > 0 || configRecovery.failed.length > 0) {
+    app.log.warn(
+      {
+        recovered: configRecovery.recovered.length,
+        conflicts: configRecovery.conflicts,
+        failed: configRecovery.failed,
+      },
+      'Some projected agent configuration could not be restored',
+    )
+  } else if (configRecovery.recovered.length > 0) {
+    app.log.info(
+      { recovered: configRecovery.recovered.length },
+      'Restored projected agent configuration',
+    )
+  }
 
   try {
     const activePaths = services.sessions.list().map(({ worktreePath }) => worktreePath)

@@ -377,9 +377,16 @@ A `-p` session shows no workspace-trust dialog, so a project's hooks run and its
 Rules:
 
 - After creating the worktree, diff `.claude/settings.json` and `.mcp.json` between base and head
-- If changed, **restore the base version** before spawning the agent
+- Also treat `.claude/settings.local.json` as executable configuration if a repository tracks it
+- If changed, **project the base version** into the worktree before spawning the agent
 - Surface it prominently in the UI. PRs that change hooks or MCP config are rare, and exactly the kind a human should look at
 - The change still renders normally in the diff view, which reads from git objects and is unaffected by worktree manipulation
+
+Projection is temporary and reference-counted so multiple agents can share one worktree. Record the
+expected base and head blob identities in an owner-only manifest before changing a file, restore the
+head version when the last agent exits, and recover stale manifests before startup worktree GC. If a
+protected file matches neither recorded version, preserve it as a user edit, keep the manifest, and
+block another projection instead of overwriting it.
 
 `--safe-mode` skips this auto-discovery while preserving CLI-owned authentication, but it also
 discards skills and guidance, defeating the purpose of this section. Restoring the base version is
@@ -576,7 +583,10 @@ Riskiest first. **Follow the order.**
 | 6A | Comment array + persistence | Inline single/multi-line drafts and restart recovery |
 | 6B | Submit | GitHub review write and post-submit worktree cleanup |
 | 7 | MCP tools + per-item chats | `itemId` routing |
-| 8 | Claude adapter + subordinate mode | Deferred until the authentication and distribution path is settled |
+| 8A | Local CLI authentication boundary | Delegate credentials and billing mode to the official CLIs |
+| 8B | Base executable-config projection | Restore safely after agent exit and daemon crashes |
+| 8C | Claude adapter + prompt/tool hardening | Stateful local CLI transport with deterministic read-only controls |
+| 8D | Subordinate mode | Attach Codex as an explicitly injected Claude MCP tool |
 | 9 | Shell | Browser, repo registration, PR list, recent items, token auth. Easiest and lowest risk |
 
 **Step 3 will take twice as long as expected.** A diff viewer with inline widgets is universally underestimated until you build one. If it stalls, dropping side-by-side and shipping unified only is the escape hatch.
