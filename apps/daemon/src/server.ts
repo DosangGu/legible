@@ -33,6 +33,7 @@ export type DaemonRuntime = {
 }
 
 export async function createDaemon(options: StartDaemonOptions): Promise<DaemonRuntime> {
+  const requestedPort = options.port ?? daemonPort
   const services = createDaemonServices({
     repoPath: options.repoPath,
     ...(options.runner ? { runner: options.runner } : {}),
@@ -43,6 +44,7 @@ export async function createDaemon(options: StartDaemonOptions): Promise<DaemonR
     ...(options.now ? { now: options.now } : {}),
     ...(options.codexBackend ? { codexBackend: options.codexBackend } : {}),
     ...(options.githubClient ? { githubClient: options.githubClient } : {}),
+    mcpOrigin: `http://127.0.0.1:${String(requestedPort)}`,
   })
   await services.persistence.restore()
   await services.preflight.refresh()
@@ -82,5 +84,9 @@ export async function startDaemon(options: StartDaemonOptions): Promise<DaemonRu
     host: options.host ?? daemonHost,
     port: options.port ?? daemonPort,
   })
+  const address = runtime.app.server.address()
+  if (typeof address === 'object' && address) {
+    runtime.services.mcp.setOrigin(`http://127.0.0.1:${String(address.port)}`)
+  }
   return runtime
 }

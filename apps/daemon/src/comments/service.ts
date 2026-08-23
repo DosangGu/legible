@@ -32,7 +32,11 @@ export class CommentService {
     return this.#session(sessionId).comments
   }
 
-  create(sessionId: string, request: CreateDraftCommentRequest): Promise<DraftComment> {
+  create(
+    sessionId: string,
+    request: CreateDraftCommentRequest,
+    origin: DraftComment['origin'] = 'human',
+  ): Promise<DraftComment> {
     return this.#serialize(sessionId, async () => {
       const session = this.#session(sessionId)
       assertDraft(session)
@@ -47,7 +51,7 @@ export class CommentService {
           ? { startLine: range.startLine, startSide: request.side }
           : {}),
         body,
-        origin: 'human',
+        origin,
         createdAt: this.now().toISOString(),
       }
       const updated = { ...session, comments: [...session.comments, comment] }

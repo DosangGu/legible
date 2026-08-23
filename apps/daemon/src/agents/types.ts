@@ -11,8 +11,14 @@ export type AgentUsage = {
 export type AgentEvent =
   | { type: 'session_started'; id: string; model: string }
   | { type: 'assistant_delta'; text: string }
-  | { type: 'tool_call'; name: string; input: unknown }
-  | { type: 'tool_result'; name: string; output: unknown }
+  | { type: 'tool_call'; callId: string; name: string; input: unknown }
+  | {
+      type: 'tool_result'
+      callId: string
+      name: string
+      status: 'completed' | 'failed'
+      output: unknown
+    }
   | { type: 'turn_completed'; usage?: AgentUsage; costUsd?: number }
   | { type: 'error'; retryable: boolean; category: string; message?: string }
 
@@ -23,13 +29,26 @@ export type McpServerSpec =
       command: string
       args?: readonly string[]
       env?: Readonly<Record<string, string>>
+      enabledTools?: readonly string[]
+      required?: boolean
     }
   | {
       name: string
       transport: 'http'
       url: string
       headers?: Readonly<Record<string, string>>
+      enabledTools?: readonly string[]
+      required?: boolean
     }
+
+export type McpServerLease = {
+  spec: McpServerSpec
+  close(): Promise<void>
+}
+
+export interface McpServerProvider {
+  open(sessionId: string, origin: 'codex'): McpServerLease
+}
 
 export type AgentStartOptions = {
   cwd: string

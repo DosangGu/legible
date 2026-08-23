@@ -7,6 +7,7 @@ import { MemoryRouter } from 'react-router-dom'
 import type { ChatSnapshot, ReviewSession } from '@legible/protocol'
 
 import { App } from '../app.js'
+import { DaemonEventsProvider } from '../events.js'
 import { diffDocument } from '../testing/fixtures.js'
 
 beforeEach(() => {
@@ -213,6 +214,50 @@ describe('ReviewPage', () => {
     })
   })
 
+  it('focuses and highlights a diff range requested by the daemon', async () => {
+    const sockets: TestWebSocket[] = []
+    vi.stubGlobal(
+      'WebSocket',
+      class extends TestWebSocket {
+        constructor(url: string | URL) {
+          super(url)
+          sockets.push(this)
+        }
+      },
+    )
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input)
+        if (url === '/api/sessions/session-1') return jsonResponse(webSession())
+        if (url.endsWith('/chat')) return jsonResponse(emptyChat())
+        if (url.endsWith('/comments')) return jsonResponse([])
+        return jsonResponse(diffDocument())
+      }),
+    )
+
+    renderReview(true)
+    expect(await screen.findByRole('heading', { name: 'session-1' })).toBeTruthy()
+    await waitFor(() => expect(sockets).toHaveLength(1))
+    sockets[0]!.receive({
+      type: 'review.focus.requested',
+      payload: {
+        sessionId: 'session-1',
+        path: 'src/a.ts',
+        side: 'RIGHT',
+        startLine: 2,
+        line: 3,
+      },
+      sequence: 1,
+      emittedAt: '2026-08-23T00:00:00.000Z',
+    })
+
+    await waitFor(() => {
+      expect(document.querySelector('.anchor-status')?.textContent).toContain('line 3')
+      expect(document.querySelectorAll('.cm-diff-selected').length).toBeGreaterThanOrEqual(2)
+    })
+  })
+
   it('warns about a stale head, submits on confirmation, and shows the receipt', async () => {
     const submissions: Record<string, unknown>[] = []
     vi.stubGlobal(
@@ -284,12 +329,33 @@ describe('ReviewPage', () => {
   })
 })
 
-function renderReview() {
-  return render(
+function renderReview(withEvents = false) {
+  const app = (
     <MemoryRouter initialEntries={['/review/session-1']}>
       <App />
-    </MemoryRouter>,
+    </MemoryRouter>
   )
+  return render(withEvents ? <DaemonEventsProvider>{app}</DaemonEventsProvider> : app)
+}
+
+class TestWebSocket extends EventTarget {
+  readonly url: string
+
+  constructor(url: string | URL) {
+    super()
+    this.url = String(url)
+    queueMicrotask(() => this.dispatchEvent(new Event('open')))
+  }
+
+  close() {
+    this.dispatchEvent(new Event('close'))
+  }
+
+  send() {}
+
+  receive(body: unknown) {
+    this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(body) }))
+  }
 }
 
 function jsonResponse(body: unknown, status = 200): Response {

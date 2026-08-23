@@ -22,8 +22,9 @@ export type ChatMessageEntry = ChatEntryBase & {
 
 export type ChatToolEntry = ChatEntryBase & {
   kind: 'tool'
+  callId?: string
   name: string
-  status: 'running' | 'completed'
+  status: 'running' | 'completed' | 'failed'
   input: string
   output?: string
 }
@@ -53,7 +54,12 @@ export type ChatStreamEvent =
   | { type: 'status'; status: ChatStatus; currentTurnId?: string }
   | { type: 'entry.added'; entry: ChatEntry }
   | { type: 'assistant.delta'; entryId: string; text: string }
-  | { type: 'tool.completed'; entryId: string; output: string }
+  | {
+      type: 'tool.completed'
+      entryId: string
+      status: 'completed' | 'failed'
+      output: string
+    }
   | { type: 'usage'; usage: ChatUsage }
 
 export type ChatEventPayload = {

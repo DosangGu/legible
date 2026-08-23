@@ -198,6 +198,29 @@ describe('CodexBackend', () => {
     server.notify('item/started', {
       threadId: 'thread-1',
       turnId: 'turn-1',
+      item: {
+        id: 'mcp-1',
+        type: 'mcpToolCall',
+        server: 'legible_review',
+        tool: 'add_comment',
+        arguments: { path: 'example.ts', line: 1 },
+      },
+    })
+    server.notify('item/completed', {
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      item: {
+        id: 'mcp-1',
+        type: 'mcpToolCall',
+        server: 'legible_review',
+        tool: 'add_comment',
+        status: 'failed',
+        error: { message: 'invalid anchor' },
+      },
+    })
+    server.notify('item/started', {
+      threadId: 'thread-1',
+      turnId: 'turn-1',
       item: { id: 'change-1', type: 'fileChange' },
     })
     await server.waitForRequest('turn/interrupt')
@@ -208,11 +231,31 @@ describe('CodexBackend', () => {
 
     await expect(eventsPromise).resolves.toEqual([
       { type: 'session_started', id: 'thread-1', model: 'future-model' },
-      { type: 'tool_call', name: 'shell', input: { command: 'git diff' } },
+      {
+        type: 'tool_call',
+        callId: 'command-1',
+        name: 'shell',
+        input: { command: 'git diff' },
+      },
       {
         type: 'tool_result',
+        callId: 'command-1',
         name: 'shell',
+        status: 'completed',
         output: { output: 'diff output', exitCode: 0, status: 'completed' },
+      },
+      {
+        type: 'tool_call',
+        callId: 'mcp-1',
+        name: 'add_comment',
+        input: { path: 'example.ts', line: 1 },
+      },
+      {
+        type: 'tool_result',
+        callId: 'mcp-1',
+        name: 'add_comment',
+        status: 'failed',
+        output: { error: 'invalid anchor' },
       },
       {
         type: 'error',
@@ -248,7 +291,7 @@ describe('CodexBackend', () => {
     await native.close()
   })
 
-  it('fails closed for unsupported routing, MCP injection, and active user MCP servers', async () => {
+  it('injects only the requested MCP server and fails closed on configuration drift', async () => {
     const cwd = await temporaryDirectory()
     const backend = new CodexBackend({
       processFactory: () => {
@@ -261,9 +304,40 @@ describe('CodexBackend', () => {
     await expect(
       backend.start({
         ...startOptions(cwd),
-        mcpServers: [{ name: 'legible', transport: 'http', url: 'http://localhost' }],
+        mcpServers: [
+          { name: 'duplicate', transport: 'http', url: 'http://localhost' },
+          { name: 'duplicate', transport: 'http', url: 'http://localhost' },
+        ],
       }),
     ).rejects.toBeInstanceOf(UnsupportedCodexOptionError)
+
+    const configuredMcp = new FakeAppServer({}, false, true)
+    const configured = await new CodexBackend({ processFactory: () => configuredMcp }).start({
+      ...startOptions(cwd),
+      mcpServers: [
+        {
+          name: 'legible_review',
+          transport: 'http',
+          url: 'http://127.0.0.1:7777/api/sessions/session-1/mcp',
+          headers: { Authorization: 'Bearer secret' },
+          enabledTools: ['add_comment', 'focus'],
+          required: true,
+        },
+      ],
+    })
+    expect(configuredMcp.findRequest('thread/start')?.params).toMatchObject({
+      config: {
+        mcp_servers: {
+          legible_review: {
+            enabled: true,
+            required: true,
+            enabled_tools: ['add_comment', 'focus'],
+            http_headers: { Authorization: 'Bearer secret' },
+          },
+        },
+      },
+    })
+    await configured.close()
 
     const activeMcp = new FakeAppServer({}, true)
     await expect(
@@ -323,12 +397,18 @@ class FakeAppServer extends EventEmitter implements AppServerProcess {
   readonly messages: Array<Record<string, unknown>> = []
   readonly #effectiveConfig: Record<string, unknown>
   readonly #activeMcp: boolean
+  readonly #configuredMcp: boolean
   #buffer = ''
 
-  constructor(effectiveConfig: Record<string, unknown> = {}, activeMcp = false) {
+  constructor(
+    effectiveConfig: Record<string, unknown> = {},
+    activeMcp = false,
+    configuredMcp = false,
+  ) {
     super()
     this.#effectiveConfig = effectiveConfig
     this.#activeMcp = activeMcp
+    this.#configuredMcp = configuredMcp
     this.stdin.setEncoding('utf8')
     this.stdin.on('data', (chunk: string) => this.#receive(chunk))
   }
@@ -390,7 +470,15 @@ class FakeAppServer extends EventEmitter implements AppServerProcess {
           result: {
             data: this.#activeMcp
               ? [{ name: 'active', serverInfo: { name: 'active' }, tools: {} }]
-              : [],
+              : this.#configuredMcp
+                ? [
+                    {
+                      name: 'legible_review',
+                      serverInfo: { name: 'legible_review' },
+                      tools: { add_comment: {}, focus: {} },
+                    },
+                  ]
+                : [],
             nextCursor: null,
           },
         })

@@ -2,7 +2,7 @@ import type { PreflightReport } from '@legible/protocol'
 
 import { CodexBackend } from './agents/codex/backend.js'
 import type { AppServerProcessFactory } from './agents/codex/app-server-client.js'
-import type { AgentBackend } from './agents/types.js'
+import type { AgentBackend, McpServerProvider } from './agents/types.js'
 import { ChatService } from './chats/service.js'
 import { CommentService } from './comments/service.js'
 import { SessionFileService } from './diffs/file-service.js'
@@ -11,6 +11,7 @@ import { SessionDiffService } from './diffs/service.js'
 import { NodeGitDiffSource, type DiffSource } from './diffs/source.js'
 import { EventBus } from './events/event-bus.js'
 import { OctokitGitHubClient, type GitHubClient } from './github/client.js'
+import { ReviewMcpServer } from './mcp/server.js'
 import { NodeCommandRunner, type CommandRunner } from './preflight/command-runner.js'
 import { PreflightService } from './preflight/service.js'
 import { SessionRegistry } from './sessions/session-registry.js'
@@ -27,6 +28,7 @@ export type DaemonServices = {
   }
   chats: ChatService
   comments: CommentService
+  mcp: ReviewMcpServer
   eventBus: EventBus
   diffs: SessionDiffService
   files: SessionFileService
@@ -49,6 +51,7 @@ export type CreateServicesOptions = {
   codexProcessFactory?: AppServerProcessFactory
   codexBackend?: AgentBackend
   githubClient?: GitHubClient
+  mcpOrigin?: string
 }
 
 export function createDaemonServices(options: CreateServicesOptions): DaemonServices {
@@ -79,11 +82,19 @@ export function createDaemonServices(options: CreateServicesOptions): DaemonServ
     new CodexBackend({
       ...(options.codexProcessFactory ? { processFactory: options.codexProcessFactory } : {}),
     })
+  const mcpHolder: { server?: ReviewMcpServer } = {}
+  const mcpProvider: McpServerProvider = {
+    open(sessionId, origin) {
+      if (!mcpHolder.server) throw new Error('Legible MCP server is not ready')
+      return mcpHolder.server.open(sessionId, origin)
+    },
+  }
   const chats = new ChatService({
     sessions,
     diffs,
     eventBus,
     codex,
+    mcp: mcpProvider,
     ...(options.now ? { now: options.now } : {}),
   })
   const persistence = new SessionPersistence(
@@ -100,6 +111,13 @@ export function createDaemonServices(options: CreateServicesOptions): DaemonServ
     mutations,
     options.now ?? (() => new Date()),
   )
+  const reviewMcp = new ReviewMcpServer({
+    origin: options.mcpOrigin ?? 'http://127.0.0.1:7777',
+    sessions,
+    comments,
+    eventBus,
+  })
+  mcpHolder.server = reviewMcp
   const submissions = new SubmissionService(
     sessions,
     persistence,
@@ -116,6 +134,7 @@ export function createDaemonServices(options: CreateServicesOptions): DaemonServ
     agents: { codex },
     chats,
     comments,
+    mcp: reviewMcp,
     diffs,
     eventBus,
     files,

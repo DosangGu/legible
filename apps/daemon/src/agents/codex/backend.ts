@@ -88,12 +88,12 @@ export class CodexBackend implements AgentBackend {
         ephemeral: true,
         serviceName: 'legible',
         developerInstructions: instructions,
-        config: buildSessionConfig(options.cwd, options.spec, effectiveConfig),
+        config: buildSessionConfig(options.cwd, options.spec, effectiveConfig, options.mcpServers),
       })
       const threadId = readNestedString(response, 'thread', 'id')
       if (!threadId) throw new CodexConfigurationError('Codex did not return a thread id')
 
-      await assertMcpServersDisabled(client, threadId)
+      await assertMcpServersConfigured(client, threadId, options.mcpServers)
       return new CodexSession(client, threadId, options.spec)
     } catch (error) {
       client.close()
@@ -268,18 +268,28 @@ class CodexSession implements AgentSession {
   #handleItemStarted(active: ActiveTurn, value: unknown): void {
     const item = asRecord(value)
     if (!item || typeof item.type !== 'string') return
+    const callId = typeof item.id === 'string' ? item.id : undefined
 
-    if (item.type === 'commandExecution') {
+    if (item.type === 'commandExecution' && callId) {
       active.queue.push({
         type: 'tool_call',
+        callId,
         name: 'shell',
         input: { command: typeof item.command === 'string' ? item.command : '' },
       })
-    } else if (item.type === 'webSearch') {
+    } else if (item.type === 'webSearch' && callId) {
       active.queue.push({
         type: 'tool_call',
+        callId,
         name: 'web_search',
         input: { query: typeof item.query === 'string' ? item.query : '' },
+      })
+    } else if (item.type === 'mcpToolCall' && callId && typeof item.tool === 'string') {
+      active.queue.push({
+        type: 'tool_call',
+        callId,
+        name: item.tool,
+        input: item.arguments,
       })
     } else if (item.type === 'fileChange') {
       active.queue.push({
@@ -295,27 +305,43 @@ class CodexSession implements AgentSession {
   #handleItemCompleted(active: ActiveTurn, value: unknown): void {
     const item = asRecord(value)
     if (!item || typeof item.type !== 'string') return
+    const callId = typeof item.id === 'string' ? item.id : undefined
 
     if (item.type === 'agentMessage') {
       const id = typeof item.id === 'string' ? item.id : undefined
       if ((!id || !active.deltaItems.has(id)) && typeof item.text === 'string' && item.text) {
         active.queue.push({ type: 'assistant_delta', text: item.text })
       }
-    } else if (item.type === 'commandExecution') {
+    } else if (item.type === 'commandExecution' && callId) {
       active.queue.push({
         type: 'tool_result',
+        callId,
         name: 'shell',
+        status: item.status === 'failed' ? 'failed' : 'completed',
         output: {
           output: typeof item.aggregatedOutput === 'string' ? item.aggregatedOutput : '',
           exitCode: typeof item.exitCode === 'number' ? item.exitCode : null,
           status: typeof item.status === 'string' ? item.status : 'unknown',
         },
       })
-    } else if (item.type === 'webSearch') {
+    } else if (item.type === 'webSearch' && callId) {
       active.queue.push({
         type: 'tool_result',
+        callId,
         name: 'web_search',
+        status: 'completed',
         output: { query: typeof item.query === 'string' ? item.query : '' },
+      })
+    } else if (item.type === 'mcpToolCall' && callId && typeof item.tool === 'string') {
+      active.queue.push({
+        type: 'tool_result',
+        callId,
+        name: item.tool,
+        status: item.status === 'failed' ? 'failed' : 'completed',
+        output:
+          item.status === 'failed'
+            ? { error: readString(asRecord(item.error)?.message) ?? 'MCP tool failed' }
+            : (item.result ?? null),
       })
     }
   }
@@ -378,8 +404,12 @@ function validateOptions(options: AgentStartOptions): void {
   if (options.spec.onOutOfScope === 'ask') {
     throw new UnsupportedCodexOptionError('Codex approval routing is not implemented yet')
   }
-  if (options.mcpServers.length > 0) {
-    throw new UnsupportedCodexOptionError('Legible MCP servers are not implemented yet')
+  const names = new Set<string>()
+  for (const server of options.mcpServers) {
+    if (!server.name || names.has(server.name)) {
+      throw new UnsupportedCodexOptionError('MCP server names must be non-empty and unique')
+    }
+    names.add(server.name)
   }
 }
 
@@ -395,6 +425,7 @@ function buildSessionConfig(
   cwd: string,
   spec: AgentSpec,
   effectiveConfig: Record<string, unknown>,
+  mcpServers: AgentStartOptions['mcpServers'],
 ): Record<string, unknown> {
   const webSearch = spec.network === 'off' ? 'disabled' : 'live'
   return {
@@ -414,9 +445,32 @@ function buildSessionConfig(
     },
     web_search: webSearch,
     tools: { web_search: webSearch !== 'disabled' },
-    mcp_servers: disableNamedEntries(effectiveConfig.mcp_servers),
+    mcp_servers: {
+      ...disableNamedEntries(effectiveConfig.mcp_servers),
+      ...Object.fromEntries(mcpServers.map((server) => [server.name, mcpServerConfig(server)])),
+    },
     plugins: disablePluginMcpServers(effectiveConfig.plugins),
   }
+}
+
+function mcpServerConfig(server: AgentStartOptions['mcpServers'][number]): Record<string, unknown> {
+  const common = {
+    enabled: true,
+    required: server.required ?? false,
+    ...(server.enabledTools ? { enabled_tools: [...server.enabledTools] } : {}),
+  }
+  return server.transport === 'http'
+    ? {
+        ...common,
+        url: server.url,
+        ...(server.headers ? { http_headers: { ...server.headers } } : {}),
+      }
+    : {
+        ...common,
+        command: server.command,
+        ...(server.args ? { args: [...server.args] } : {}),
+        ...(server.env ? { env: { ...server.env } } : {}),
+      }
 }
 
 function disableNamedEntries(value: unknown): Record<string, { enabled: false }> {
@@ -438,21 +492,43 @@ function disablePluginMcpServers(value: unknown): Record<string, unknown> {
   )
 }
 
-async function assertMcpServersDisabled(client: AppServerClient, threadId: string): Promise<void> {
+async function assertMcpServersConfigured(
+  client: AppServerClient,
+  threadId: string,
+  expectedServers: AgentStartOptions['mcpServers'],
+): Promise<void> {
   const response = await client.request('mcpServerStatus/list', {
     threadId,
     detail: 'toolsAndAuthOnly',
     limit: 100,
   })
   const data = asRecord(response)?.data
-  if (!Array.isArray(data)) return
+  if (!Array.isArray(data)) {
+    throw new CodexConfigurationError('Codex returned an invalid MCP server status')
+  }
 
-  const active = data.some((value) => {
+  const active = data.flatMap((value) => {
     const server = asRecord(value)
     const tools = asRecord(server?.tools)
     return server?.serverInfo !== null || (tools !== undefined && Object.keys(tools).length > 0)
+      ? [{ name: readString(server?.name), tools: Object.keys(tools ?? {}) }]
+      : []
   })
-  if (active) throw new CodexConfigurationError('Configured MCP servers remained active')
+  const expected = new Map(expectedServers.map((server) => [server.name, server]))
+  if (active.some(({ name }) => !name || !expected.has(name))) {
+    throw new CodexConfigurationError('An unexpected MCP server remained active')
+  }
+  for (const [name, server] of expected) {
+    const found = active.find((candidate) => candidate.name === name)
+    if (!found) throw new CodexConfigurationError(`Required MCP server is unavailable: ${name}`)
+    if (
+      server.enabledTools &&
+      (found.tools.length !== server.enabledTools.length ||
+        server.enabledTools.some((tool) => !found.tools.includes(tool)))
+    ) {
+      throw new CodexConfigurationError(`MCP tool set does not match: ${name}`)
+    }
+  }
 }
 
 async function buildDeveloperInstructions(cwd: string, systemPrompt: string): Promise<string> {
@@ -518,6 +594,10 @@ function readNestedString(value: unknown, key: string, nestedKey: string): strin
   const nested = asRecord(asRecord(value)?.[key])
   const result = nested?.[nestedKey]
   return typeof result === 'string' ? result : undefined
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined
 }
 
 function numberValue(value: unknown): number | undefined {

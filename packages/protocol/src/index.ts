@@ -42,4 +42,5 @@ export type {
   PreflightReport,
   PreflightStatus,
   PreflightTool,
+  ReviewFocusRequest,
 } from './api.js'

@@ -11,6 +11,7 @@ import {
   reconcileSubmission,
   submitReview,
 } from '../api.js'
+import { useDaemonEvents } from '../events-context.js'
 import { CodeView, type InlineWidget, type ScrollRequest } from './code-view.js'
 import { ChatPanel } from './chat-panel.js'
 import { DraftCommentCard, NewCommentComposer } from './inline-comments.js'
@@ -103,6 +104,7 @@ function ReviewWorkspace({
   onSubmitted(session: ReviewSession): void
 }) {
   const sessionId = session.id
+  const events = useDaemonEvents()
   const model = useMemo(() => buildDiffRenderModel(diff), [diff])
   const draftComments = useComments(sessionId)
   const [selectedFileIndex, setSelectedFileIndex] = useState(0)
@@ -113,6 +115,7 @@ function ReviewWorkspace({
   const [fileError, setFileError] = useState<{ key: string; message: string }>()
   const [chatCollapsed, setChatCollapsed] = useState(false)
   const [commentRange, setCommentRange] = useState<CommentRange>()
+  const [focusedRange, setFocusedRange] = useState<CommentRange>()
   const [commentBody, setCommentBody] = useState('')
   const [commentError, setCommentError] = useState<string>()
   const [submitting, setSubmitting] = useState(false)
@@ -143,6 +146,35 @@ function ReviewWorkspace({
     return () => controller.abort()
   }, [cachedFile, fileKey, sessionId, target.path, target.side, viewMode])
 
+  useEffect(
+    () =>
+      events.subscribe((event) => {
+        if (event.type !== 'review.focus.requested' || event.payload.sessionId !== sessionId) {
+          return
+        }
+        const { path, side, line, startLine } = event.payload
+        const index = diff.files.findIndex((file) =>
+          side === 'LEFT' ? file.oldPath === path : file.newPath === path,
+        )
+        const start = findAnchor(model, path, side, startLine ?? line)
+        const end = findAnchor(model, path, side, line)
+        if (index < 0 || !start || !end) return
+        setSelectedFileIndex(index)
+        setViewMode('diff')
+        setCommentRange(undefined)
+        setFocusedRange({ start, end })
+        setAnchor(end)
+        const renderedLine = findRenderedLine(model, end)
+        if (renderedLine !== undefined) {
+          setScrollRequest((current) => ({
+            line: renderedLine,
+            nonce: (current?.nonce ?? 0) + 1,
+          }))
+        }
+      }),
+    [diff.files, events, model, sessionId],
+  )
+
   const chooseFile = (index: number) => {
     setSelectedFileIndex(index)
     const rendered = model.files[index]
@@ -156,6 +188,7 @@ function ReviewWorkspace({
 
   const selectAnchor = (selected: DiffAnchor, extend: boolean) => {
     setAnchor(selected)
+    setFocusedRange(undefined)
     setCommentError(undefined)
     setCommentRange((current) => {
       if (
@@ -240,7 +273,7 @@ function ReviewWorkspace({
     <CodeView
       model={model}
       selectedAnchor={anchor}
-      selectedRange={commentRange}
+      selectedRange={commentRange ?? focusedRange}
       onAnchorSelect={selectAnchor}
       scrollRequest={scrollRequest}
       inlineWidgets={widgetsFor(model)}
@@ -267,7 +300,7 @@ function ReviewWorkspace({
         <CodeView
           model={wholeModel}
           selectedAnchor={anchor}
-          selectedRange={commentRange}
+          selectedRange={commentRange ?? focusedRange}
           onAnchorSelect={selectAnchor}
           inlineWidgets={widgetsFor(wholeModel)}
         />
@@ -587,6 +620,17 @@ function findAnchor(
     if (anchor?.path === path && anchor.line === line) return anchor
   }
   return undefined
+}
+
+function findRenderedLine(
+  model: ReturnType<typeof buildDiffRenderModel>,
+  target: DiffAnchor,
+): number | undefined {
+  const index = model.lines.findIndex((rendered) => {
+    const anchor = target.side === 'LEFT' ? rendered.leftAnchor : rendered.rightAnchor
+    return anchor?.path === target.path && anchor.line === target.line
+  })
+  return index < 0 ? undefined : index + 1
 }
 
 function formatRange(range: CommentRange): string {

@@ -109,7 +109,7 @@ export function applyChatEvent(current: ChatSnapshot, payload: ChatEventPayload)
     case 'tool.completed': {
       const entry = next.entries.find((candidate) => candidate.id === event.entryId)
       if (entry?.kind === 'tool') {
-        entry.status = 'completed'
+        entry.status = event.status
         entry.output = event.output
       }
       break

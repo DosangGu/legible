@@ -142,7 +142,13 @@ function ChatEntryView({ entry }: { entry: ChatEntry }) {
   return (
     <details className="chat-tool">
       <summary>
-        <span>{entry.status === 'running' ? 'Working' : 'Activity'}</span>
+        <span>
+          {entry.status === 'running'
+            ? 'Working'
+            : entry.status === 'failed'
+              ? 'Failed'
+              : 'Activity'}
+        </span>
         <strong>{entry.name}</strong>
       </summary>
       <pre>{entry.input}</pre>

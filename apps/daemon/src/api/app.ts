@@ -102,6 +102,20 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     (request) => options.services.submissions.reconcile(request.params.sessionId),
   )
 
+  app.route<{ Params: { sessionId: string }; Body: unknown }>({
+    method: ['GET', 'POST', 'DELETE'],
+    url: '/api/sessions/:sessionId/mcp',
+    handler: async (request, reply) => {
+      reply.hijack()
+      await options.services.mcp.handle(
+        request.params.sessionId,
+        request.raw,
+        reply.raw,
+        request.body,
+      )
+    },
+  })
+
   app.post<{ Params: { sessionId: string } }>(
     '/api/sessions/:sessionId/submission/cleanup',
     (request) => options.services.submissions.cleanup(request.params.sessionId),
@@ -279,7 +293,11 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     try {
       await options.services.persistence.close()
     } finally {
-      await options.services.chats.close()
+      try {
+        await options.services.chats.close()
+      } finally {
+        await options.services.mcp.close()
+      }
     }
   })
 

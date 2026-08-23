@@ -1,5 +1,6 @@
 import type { ReviewSession } from './model.js'
 import type { ChatEventPayload } from './chat.js'
+import type { DiffSide } from './diff.js'
 
 export type PreflightTool = 'git' | 'gh' | 'claude' | 'codex'
 
@@ -37,6 +38,14 @@ export type ApiError = {
   }
 }
 
+export type ReviewFocusRequest = {
+  sessionId: string
+  path: string
+  line: number
+  side: DiffSide
+  startLine?: number
+}
+
 export type DaemonEvent =
   | { type: 'daemon.snapshot'; payload: DaemonSnapshot }
   | { type: 'preflight.updated'; payload: PreflightReport }
@@ -44,6 +53,7 @@ export type DaemonEvent =
   | { type: 'session.updated'; payload: ReviewSession }
   | { type: 'session.removed'; payload: { id: string } }
   | { type: 'chat.event'; payload: ChatEventPayload }
+  | { type: 'review.focus.requested'; payload: ReviewFocusRequest }
 
 export type DaemonEventEnvelope = DaemonEvent & {
   sequence: number

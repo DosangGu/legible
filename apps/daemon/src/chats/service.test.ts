@@ -1,7 +1,13 @@
 import type { AgentSpec, ChatSnapshot } from '@legible/protocol'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { AgentBackend, AgentEvent, AgentSession, AgentStartOptions } from '../agents/types.js'
+import type {
+  AgentBackend,
+  AgentEvent,
+  AgentSession,
+  AgentStartOptions,
+  McpServerProvider,
+} from '../agents/types.js'
 import { SessionDiffService } from '../diffs/service.js'
 import type { DiffSource } from '../diffs/source.js'
 import { EventBus } from '../events/event-bus.js'
@@ -26,8 +32,14 @@ describe('ChatService', () => {
     const events: AgentEvent[] = [
       { type: 'session_started', id: 'codex-1', model: 'test-model' },
       { type: 'assistant_delta', text: 'Found ' },
-      { type: 'tool_call', name: 'shell', input: { command: 'git show' } },
-      { type: 'tool_result', name: 'shell', output: 'x'.repeat(33 * 1024) },
+      { type: 'tool_call', callId: 'tool-1', name: 'shell', input: { command: 'git show' } },
+      {
+        type: 'tool_result',
+        callId: 'tool-1',
+        name: 'shell',
+        status: 'completed',
+        output: 'x'.repeat(33 * 1024),
+      },
       { type: 'assistant_delta', text: 'one issue.' },
       {
         type: 'turn_completed',
@@ -192,9 +204,53 @@ describe('ChatService', () => {
     expect(backend.inputs[0]).toContain('A previous ephemeral review thread was lost')
     await chats.close()
   })
+
+  it('rotates and closes the MCP lease with the Codex agent session', async () => {
+    let attempt = 0
+    const backend: AgentBackend = {
+      async start(options) {
+        expect(options.mcpServers).toHaveLength(1)
+        attempt += 1
+        return {
+          async *send() {
+            if (attempt === 1) throw new Error('transport lost')
+            yield { type: 'turn_completed' as const }
+          },
+          async interrupt() {},
+          async close() {},
+        }
+      },
+    }
+    const closed: Array<ReturnType<typeof vi.fn>> = []
+    const mcp: McpServerProvider = {
+      open() {
+        const close = vi.fn(async () => undefined)
+        closed.push(close)
+        return {
+          spec: {
+            name: 'legible_review',
+            transport: 'http',
+            url: 'http://127.0.0.1:7777/mcp',
+          },
+          close,
+        }
+      },
+    }
+    const { chats } = setup(backend, true, mcp)
+
+    chats.send('session-1', 'Review')
+    await waitForSnapshot(chats, (value) => value.status === 'failed')
+    expect(closed[0]).toHaveBeenCalledOnce()
+    chats.retry('session-1')
+    await waitForSnapshot(chats, (value) => value.status === 'idle')
+    expect(closed).toHaveLength(2)
+    expect(closed[1]).not.toHaveBeenCalled()
+    await chats.close()
+    expect(closed[1]).toHaveBeenCalledOnce()
+  })
 })
 
-function setup(backend: AgentBackend, addSession = true) {
+function setup(backend: AgentBackend, addSession = true, mcp?: McpServerProvider) {
   const eventBus = new EventBus()
   const sessions = new SessionRegistry(eventBus)
   if (addSession) {
@@ -212,6 +268,7 @@ function setup(backend: AgentBackend, addSession = true) {
     diffs,
     eventBus,
     codex: backend,
+    ...(mcp ? { mcp } : {}),
     now: () => new Date('2026-08-22T00:00:00.000Z'),
     idFactory: (() => {
       let id = 0

@@ -376,6 +376,148 @@ describe('daemon API', () => {
     expect(removed.statusCode).toBe(204)
   })
 
+  it('serves authenticated session-bound MCP comment tools', async () => {
+    const runtime = await makeRuntime(new ReadyCommandRunner(), diffSourceFrom(exampleDiff))
+    runtime.services.sessions.add(
+      reviewSession({ baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40) }),
+    )
+    const lease = runtime.services.mcp.open('session-1', 'codex')
+    const authorization = lease.spec.transport === 'http' ? lease.spec.headers?.Authorization : ''
+
+    const unauthorized = await runtime.app.inject({
+      method: 'POST',
+      url: '/api/sessions/session-1/mcp',
+      headers: { host: 'localhost' },
+      payload: mcpCall(1, 'tools/list', {}),
+    })
+    expect(unauthorized.statusCode).toBe(401)
+
+    const listed = await runtime.app.inject({
+      method: 'POST',
+      url: '/api/sessions/session-1/mcp',
+      headers: mcpHeaders(authorization),
+      payload: mcpCall(2, 'tools/list', {}),
+    })
+    expect(mcpResult(listed.body)).toMatchObject({
+      tools: expect.arrayContaining([
+        expect.objectContaining({ name: 'add_comment' }),
+        expect.objectContaining({ name: 'focus' }),
+      ]),
+    })
+
+    const added = await runtime.app.inject({
+      method: 'POST',
+      url: '/api/sessions/session-1/mcp',
+      headers: mcpHeaders(authorization),
+      payload: mcpCall(3, 'tools/call', {
+        name: 'add_comment',
+        arguments: {
+          path: 'example.ts',
+          line: 1,
+          side: 'RIGHT',
+          body: 'Agent draft',
+          origin: 'human',
+          sessionId: 'another-session',
+        },
+      }),
+    })
+    expect(mcpResult(added.body)).toMatchObject({
+      structuredContent: { comment: { body: 'Agent draft', origin: 'codex' } },
+    })
+    expect(runtime.services.comments.list('session-1')).toEqual([
+      expect.objectContaining({ body: 'Agent draft', origin: 'codex' }),
+    ])
+    const commentId = runtime.services.comments.list('session-1')[0]!.id
+
+    const edited = await runtime.app.inject({
+      method: 'POST',
+      url: '/api/sessions/session-1/mcp',
+      headers: mcpHeaders(authorization),
+      payload: mcpCall(4, 'tools/call', {
+        name: 'edit_comment',
+        arguments: { id: commentId, body: 'Revised agent draft' },
+      }),
+    })
+    expect(mcpResult(edited.body)).toMatchObject({
+      structuredContent: { comment: { id: commentId, body: 'Revised agent draft' } },
+    })
+
+    const comments = await runtime.app.inject({
+      method: 'POST',
+      url: '/api/sessions/session-1/mcp',
+      headers: mcpHeaders(authorization),
+      payload: mcpCall(5, 'tools/call', {
+        name: 'list_comments',
+        arguments: {},
+      }),
+    })
+    expect(mcpResult(comments.body)).toMatchObject({
+      structuredContent: {
+        comments: [expect.objectContaining({ id: commentId, origin: 'codex' })],
+      },
+    })
+
+    const focusEvents: DaemonEventEnvelope[] = []
+    const unsubscribe = runtime.services.eventBus.subscribe((event) => focusEvents.push(event))
+    const focused = await runtime.app.inject({
+      method: 'POST',
+      url: '/api/sessions/session-1/mcp',
+      headers: mcpHeaders(authorization),
+      payload: mcpCall(6, 'tools/call', {
+        name: 'focus',
+        arguments: { path: 'example.ts', line: 1, side: 'RIGHT' },
+      }),
+    })
+    expect(mcpResult(focused.body)).toMatchObject({
+      structuredContent: { focus: { sessionId: 'session-1', path: 'example.ts', line: 1 } },
+    })
+    expect(focusEvents).toContainEqual(
+      expect.objectContaining({
+        type: 'review.focus.requested',
+        payload: expect.objectContaining({ sessionId: 'session-1', side: 'RIGHT', line: 1 }),
+      }),
+    )
+    unsubscribe()
+
+    const removedByAgent = await runtime.app.inject({
+      method: 'POST',
+      url: '/api/sessions/session-1/mcp',
+      headers: mcpHeaders(authorization),
+      payload: mcpCall(7, 'tools/call', {
+        name: 'remove_comment',
+        arguments: { id: commentId },
+      }),
+    })
+    expect(mcpResult(removedByAgent.body)).toMatchObject({
+      structuredContent: { removedId: commentId },
+    })
+
+    const wrongSession = await runtime.app.inject({
+      method: 'POST',
+      url: '/api/sessions/another-session/mcp',
+      headers: mcpHeaders(authorization),
+      payload: mcpCall(8, 'tools/list', {}),
+    })
+    expect(wrongSession.statusCode).toBe(401)
+
+    const wrongHost = await runtime.app.inject({
+      method: 'POST',
+      url: '/api/sessions/session-1/mcp',
+      headers: { ...mcpHeaders(authorization), host: 'attacker.example' },
+      payload: mcpCall(9, 'tools/list', {}),
+    })
+    expect(wrongHost.statusCode).toBe(403)
+
+    await lease.close()
+    const expired = await runtime.app.inject({
+      method: 'POST',
+      url: '/api/sessions/session-1/mcp',
+      headers: mcpHeaders(authorization),
+      payload: mcpCall(10, 'tools/list', {}),
+    })
+    expect(expired.statusCode).toBe(401)
+  })
+
   it('submits a human review and returns its durable GitHub receipt', async () => {
     let submitted: CreateGitHubReview | undefined
     const github: GitHubClient = {
@@ -454,6 +596,28 @@ const exampleDiff = [
   '-before',
   '+after',
 ]
+
+function mcpHeaders(authorization: string | undefined) {
+  return {
+    host: 'localhost',
+    accept: 'application/json, text/event-stream',
+    'content-type': 'application/json',
+    ...(authorization ? { authorization } : {}),
+  }
+}
+
+function mcpCall(id: number, method: string, params: Record<string, unknown>) {
+  return { jsonrpc: '2.0', id, method, params }
+}
+
+function mcpResult(body: string): Record<string, unknown> {
+  const data = body
+    .split('\n')
+    .find((line) => line.startsWith('data: '))
+    ?.slice('data: '.length)
+  const message = JSON.parse(data ?? body) as { result?: Record<string, unknown> }
+  return message.result ?? {}
+}
 
 function diffSourceFrom(lines: readonly string[]): DiffSource {
   return {
