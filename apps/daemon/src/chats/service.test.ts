@@ -15,6 +15,7 @@ import { SessionRegistry } from '../sessions/session-registry.js'
 import { reviewSession } from '../testing/fixtures.js'
 import {
   ChatBusyError,
+  ChatItemNotFoundError,
   ChatService,
   ChatUnavailableError,
   InvalidChatMessageError,
@@ -163,6 +164,61 @@ describe('ChatService', () => {
       ]),
     )
     expect(close).toHaveBeenCalledOnce()
+    await chats.close()
+  })
+
+  it('routes a turn to a draft comment and bootstraps it with the full diff', async () => {
+    const backend = scriptedBackend(() => [
+      { type: 'assistant_delta', text: 'The range is correct.' },
+      { type: 'turn_completed' },
+    ])
+    const { chats, sessions } = setup(backend, false)
+    sessions.add(
+      reviewSession({
+        baseSha: 'a'.repeat(40),
+        headSha: 'b'.repeat(40),
+        config: { main: codexSpec },
+        comments: [
+          {
+            id: 'comment-1',
+            path: 'a.ts',
+            side: 'RIGHT',
+            startLine: 1,
+            line: 2,
+            body: 'Could this be simpler?',
+            origin: 'human',
+            createdAt: '2026-08-22T00:00:00.000Z',
+          },
+        ],
+      }),
+    )
+
+    const accepted = chats.send('session-1', 'Explain the tradeoff', 'comment-1')
+    expect(accepted.itemId).toBe('comment-1')
+    const snapshot = await waitForSnapshot(chats, (value) => value.status === 'idle')
+
+    expect(backend.inputs[0]).toContain('BEGIN UNTRUSTED DIFF')
+    expect(backend.inputs[0]).toContain('[comment #1: a.ts:1-2 RIGHT]')
+    expect(backend.inputs[0]).toContain('Could this be simpler?')
+    expect(snapshot.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'message', role: 'user', itemId: 'comment-1' }),
+        expect.objectContaining({
+          kind: 'message',
+          role: 'assistant',
+          itemId: 'comment-1',
+        }),
+      ]),
+    )
+    await chats.close()
+  })
+
+  it('rejects a turn for a missing draft comment before spawning Codex', async () => {
+    const backend = scriptedBackend(() => [])
+    const { chats } = setup(backend)
+
+    expect(() => chats.send('session-1', 'Explain this', 'missing')).toThrow(ChatItemNotFoundError)
+    expect(backend.start).not.toHaveBeenCalled()
     await chats.close()
   })
 

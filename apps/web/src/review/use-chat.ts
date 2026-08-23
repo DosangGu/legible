@@ -82,7 +82,8 @@ export function useChat(sessionId: string) {
     loadError,
     refresh,
     start: () => command(() => startReview(sessionId)),
-    send: (message: string) => command(() => sendChatMessage(sessionId, message)),
+    send: (message: string, itemId?: string) =>
+      command(() => sendChatMessage(sessionId, message, itemId)),
     interrupt: () => command(() => interruptChat(sessionId)),
     retry: () => command(() => retryChat(sessionId)),
   }
@@ -97,6 +98,10 @@ export function applyChatEvent(current: ChatSnapshot, payload: ChatEventPayload)
       next.status = event.status
       if (event.currentTurnId === undefined) delete next.currentTurnId
       else next.currentTurnId = event.currentTurnId
+      if (event.currentItemId === undefined) delete next.currentItemId
+      else next.currentItemId = event.currentItemId
+      if (event.retryItemId === undefined) delete next.retryItemId
+      else next.retryItemId = event.retryItemId
       break
     case 'entry.added':
       next.entries.push(event.entry)

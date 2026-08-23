@@ -214,6 +214,48 @@ describe('ReviewPage', () => {
     })
   })
 
+  it('opens a comment conversation and routes its message by item id', async () => {
+    let sent: Record<string, unknown> | undefined
+    const comment = {
+      id: 'comment-1',
+      path: 'src/a.ts',
+      side: 'RIGHT' as const,
+      startLine: 2,
+      line: 3,
+      body: 'Please explain this range.',
+      origin: 'human' as const,
+      createdAt: '2026-08-22T00:00:00.000Z',
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input)
+        if (url === '/api/sessions/session-1') return jsonResponse(webSession())
+        if (url.endsWith('/diff')) return jsonResponse(diffDocument())
+        if (url.endsWith('/comments')) return jsonResponse([comment])
+        if (url.endsWith('/chat/messages') && init?.method === 'POST') {
+          sent = JSON.parse(String(init.body)) as Record<string, unknown>
+          return jsonResponse(
+            { sessionId: 'session-1', turnId: 'turn-1', itemId: 'comment-1', revision: 1 },
+            202,
+          )
+        }
+        if (url.endsWith('/chat')) return jsonResponse(emptyChat())
+        throw new Error(`Unexpected request: ${url}`)
+      }),
+    )
+    const user = userEvent.setup()
+    renderReview()
+
+    await user.click(await screen.findByRole('button', { name: 'Discuss' }))
+    expect((await screen.findAllByText('Comment #1')).length).toBeGreaterThanOrEqual(1)
+    expect(document.querySelectorAll('.cm-diff-selected').length).toBeGreaterThanOrEqual(2)
+    await user.type(screen.getByRole('textbox', { name: 'Chat message' }), 'Why keep this?')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+
+    await waitFor(() => expect(sent).toEqual({ message: 'Why keep this?', itemId: 'comment-1' }))
+  })
+
   it('focuses and highlights a diff range requested by the daemon', async () => {
     const sockets: TestWebSocket[] = []
     vi.stubGlobal(

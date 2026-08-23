@@ -1,4 +1,10 @@
-import type { DiffDocument, ReviewEvent, ReviewFileContent, ReviewSession } from '@legible/protocol'
+import type {
+  DiffDocument,
+  DraftComment,
+  ReviewEvent,
+  ReviewFileContent,
+  ReviewSession,
+} from '@legible/protocol'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useParams } from 'react-router-dom'
 
@@ -13,7 +19,7 @@ import {
 } from '../api.js'
 import { useDaemonEvents } from '../events-context.js'
 import { CodeView, type InlineWidget, type ScrollRequest } from './code-view.js'
-import { ChatPanel } from './chat-panel.js'
+import { ChatPanel, type ChatItemView } from './chat-panel.js'
 import { DraftCommentCard, NewCommentComposer } from './inline-comments.js'
 import { useComments } from './use-comments.js'
 import {
@@ -114,6 +120,8 @@ function ReviewWorkspace({
   const [fileCache, setFileCache] = useState(() => new Map<string, ReviewFileContent>())
   const [fileError, setFileError] = useState<{ key: string; message: string }>()
   const [chatCollapsed, setChatCollapsed] = useState(false)
+  const [selectedChatItemId, setSelectedChatItemId] = useState<string>()
+  const [knownChatItems, setKnownChatItems] = useState<Map<string, ChatItemView>>(() => new Map())
   const [commentRange, setCommentRange] = useState<CommentRange>()
   const [focusedRange, setFocusedRange] = useState<CommentRange>()
   const [commentBody, setCommentBody] = useState('')
@@ -124,6 +132,15 @@ function ReviewWorkspace({
   const targetSha = target.side === 'RIGHT' ? diff.headSha : diff.baseSha
   const fileKey = `${targetSha}\0${target.side}\0${target.path}`
   const cachedFile = fileCache.get(fileKey)
+
+  const liveCommentIds = new Set(draftComments.comments.map((comment) => comment.id))
+  const chatItems = [
+    ...draftComments.comments.map((comment, index) => chatItem(comment, index + 1, false)),
+    ...[...knownChatItems.values()]
+      .filter((item) => !liveCommentIds.has(item.id))
+      .map((item) => ({ ...item, deleted: true })),
+  ]
+  const selectedChatItem = chatItems.find((item) => item.id === selectedChatItemId)
 
   useEffect(() => {
     if (viewMode !== 'whole' || cachedFile) return
@@ -207,17 +224,51 @@ function ReviewWorkspace({
     })
   }
 
+  const openCommentChat = (comment: DraftComment, number: number) => {
+    setKnownChatItems((current) => {
+      const next = new Map(current)
+      next.set(comment.id, chatItem(comment, number, false))
+      return next
+    })
+    setSelectedChatItemId(comment.id)
+    setChatCollapsed(false)
+    focusComment(comment)
+  }
+
+  const focusComment = (comment: Pick<DraftComment, 'path' | 'side' | 'line' | 'startLine'>) => {
+    const index = diff.files.findIndex((file) =>
+      comment.side === 'LEFT' ? file.oldPath === comment.path : file.newPath === comment.path,
+    )
+    const start = findAnchor(model, comment.path, comment.side, comment.startLine ?? comment.line)
+    const end = findAnchor(model, comment.path, comment.side, comment.line)
+    if (index < 0 || !start || !end) return
+    setSelectedFileIndex(index)
+    setViewMode('diff')
+    setCommentRange(undefined)
+    setFocusedRange({ start, end })
+    setAnchor(end)
+    const renderedLine = findRenderedLine(model, end)
+    if (renderedLine !== undefined) {
+      setScrollRequest((current) => ({
+        line: renderedLine,
+        nonce: (current?.nonce ?? 0) + 1,
+      }))
+    }
+  }
+
   const widgetsFor = (rendered: ReturnType<typeof buildDiffRenderModel>): InlineWidget[] => {
     const widgets: InlineWidget[] = []
-    for (const comment of draftComments.comments) {
+    for (const [index, comment] of draftComments.comments.entries()) {
       const commentAnchor = findAnchor(rendered, comment.path, comment.side, comment.line)
       if (!commentAnchor) continue
       widgets.push({
-        id: `comment:${comment.id}:${comment.body}`,
+        id: `comment:${comment.id}:${comment.body}:${String(selectedChatItemId === comment.id)}`,
         anchor: commentAnchor,
         content: (
           <DraftCommentCard
             comment={comment}
+            discussing={selectedChatItemId === comment.id}
+            onDiscuss={() => openCommentChat(comment, index + 1)}
             onUpdate={async (body) => {
               await draftComments.update(comment.id, body)
             }}
@@ -409,6 +460,15 @@ function ReviewWorkspace({
         <ChatPanel
           sessionId={sessionId}
           collapsed={chatCollapsed}
+          {...(selectedChatItemId === undefined ? {} : { selectedItemId: selectedChatItemId })}
+          {...(selectedChatItem === undefined ? {} : { item: selectedChatItem })}
+          items={chatItems}
+          onSelectItem={(itemId) => {
+            setSelectedChatItemId(itemId)
+            setChatCollapsed(false)
+            const selected = chatItems.find((item) => item.id === itemId)
+            if (selected && !selected.deleted) focusComment(selected)
+          }}
           onToggle={() => setChatCollapsed((value) => !value)}
         />
       </div>
@@ -637,6 +697,19 @@ function formatRange(range: CommentRange): string {
   return range.start.line === range.end.line
     ? `${range.end.side} ${String(range.end.line)}`
     : `${range.end.side} ${String(range.start.line)}–${String(range.end.line)}`
+}
+
+function chatItem(comment: DraftComment, number: number, deleted: boolean): ChatItemView {
+  return {
+    id: comment.id,
+    number,
+    path: comment.path,
+    line: comment.line,
+    side: comment.side,
+    ...(comment.startLine === undefined ? {} : { startLine: comment.startLine }),
+    body: comment.body,
+    deleted,
+  }
 }
 
 function PageState({

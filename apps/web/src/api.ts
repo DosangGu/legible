@@ -85,8 +85,12 @@ export function startReview(sessionId: string): Promise<ChatCommandAccepted> {
   return chatCommand(sessionId, 'start')
 }
 
-export function sendChatMessage(sessionId: string, message: string): Promise<ChatCommandAccepted> {
-  return chatCommand(sessionId, 'messages', { message })
+export function sendChatMessage(
+  sessionId: string,
+  message: string,
+  itemId?: string,
+): Promise<ChatCommandAccepted> {
+  return chatCommand(sessionId, 'messages', { message, ...(itemId ? { itemId } : {}) })
 }
 
 export function interruptChat(sessionId: string): Promise<ChatCommandAccepted> {

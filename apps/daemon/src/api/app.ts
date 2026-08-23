@@ -12,6 +12,7 @@ import type {
 
 import {
   ChatBusyError,
+  ChatItemNotFoundError,
   ChatNotFoundError,
   ChatRetryUnavailableError,
   ChatUnavailableError,
@@ -188,15 +189,25 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       reply.code(202).send(options.services.chats.startReview(request.params.sessionId)),
   )
 
-  app.post<{ Params: { sessionId: string }; Body: { message?: unknown } }>(
+  app.post<{ Params: { sessionId: string }; Body: { message?: unknown; itemId?: unknown } }>(
     '/api/sessions/:sessionId/chat/messages',
     (request, reply) => {
-      if (typeof request.body?.message !== 'string') {
+      if (
+        typeof request.body?.message !== 'string' ||
+        (request.body.itemId !== undefined &&
+          (typeof request.body.itemId !== 'string' || request.body.itemId.length === 0))
+      ) {
         throw new InvalidChatMessageError('A message is required')
       }
       return reply
         .code(202)
-        .send(options.services.chats.send(request.params.sessionId, request.body.message))
+        .send(
+          options.services.chats.send(
+            request.params.sessionId,
+            request.body.message,
+            request.body.itemId,
+          ),
+        )
     },
   )
 
@@ -402,6 +413,12 @@ function mapChatError(error: unknown): { status: 400 | 404 | 409; body: ApiError
     return {
       status: 400,
       body: { error: { code: 'invalid_chat_message', message: error.message } },
+    }
+  }
+  if (error instanceof ChatItemNotFoundError) {
+    return {
+      status: 404,
+      body: { error: { code: 'chat_item_not_found', message: error.message } },
     }
   }
   if (error instanceof ChatUnavailableError) {

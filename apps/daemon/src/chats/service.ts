@@ -25,7 +25,8 @@ const maxMessageBytes = 16 * 1024
 const maxToolTextBytes = 32 * 1024
 const initialDisplayMessage = 'Review this pull request.'
 
-export type PersistedChatRequest = { kind: 'review' } | { kind: 'message'; message: string }
+export type PersistedChatRequest =
+  { kind: 'review' } | { kind: 'message'; message: string; itemId?: string }
 
 export type PersistedChatState = {
   snapshot: ChatSnapshot
@@ -52,6 +53,7 @@ export class ChatBusyError extends Error {}
 export class ChatUnavailableError extends Error {}
 export class InvalidChatMessageError extends Error {}
 export class ChatRetryUnavailableError extends Error {}
+export class ChatItemNotFoundError extends Error {}
 
 export type ChatServiceOptions = {
   sessions: SessionRegistry
@@ -102,12 +104,14 @@ export class ChatService {
     let retry = persisted.retry
     if (persisted.active) {
       retry = persisted.active
+      const activeItemId = requestItemId(persisted.active)
       const turnId = snapshot.currentTurnId ?? this.#idFactory()
       snapshot.entries.push({
         id: this.#idFactory(),
         turnId,
         createdAt: this.#now().toISOString(),
         kind: 'notice',
+        ...(activeItemId ? { itemId: activeItemId } : {}),
         level: 'error',
         message: 'The daemon stopped during this turn. Retry to continue in a new Codex thread.',
         retryable: true,
@@ -115,10 +119,15 @@ export class ChatService {
       snapshot.revision += 1
       snapshot.status = 'failed'
       delete snapshot.currentTurnId
+      delete snapshot.currentItemId
     } else if (['starting', 'running', 'interrupting'].includes(snapshot.status)) {
       snapshot.status = 'failed'
       delete snapshot.currentTurnId
+      delete snapshot.currentItemId
     }
+    const retryItemId = retry ? requestItemId(retry) : undefined
+    if (retryItemId) snapshot.retryItemId = retryItemId
+    else delete snapshot.retryItemId
     this.#states.set(sessionId, {
       snapshot,
       agent: undefined,
@@ -140,14 +149,20 @@ export class ChatService {
     return this.#begin(session, state, { kind: 'review' }, initialDisplayMessage)
   }
 
-  send(sessionId: string, message: string): ChatCommandAccepted {
+  send(sessionId: string, message: string, itemId?: string): ChatCommandAccepted {
     const normalized = validateMessage(message)
     const session = this.#session(sessionId)
     assertDraft(session)
+    if (itemId !== undefined) assertChatItem(session, itemId)
     const state = this.#state(session)
     this.#assertAvailable(state)
     if (state.active) throw new ChatBusyError('A chat turn is already active')
-    return this.#begin(session, state, { kind: 'message', message: normalized }, normalized)
+    return this.#begin(
+      session,
+      state,
+      { kind: 'message', message: normalized, ...(itemId ? { itemId } : {}) },
+      normalized,
+    )
   }
 
   retry(sessionId: string): ChatCommandAccepted {
@@ -158,6 +173,8 @@ export class ChatService {
     if (state.active) throw new ChatBusyError('A chat turn is already active')
     if (!state.retry) throw new ChatRetryUnavailableError('There is no failed turn to retry')
     const request = state.retry
+    const itemId = requestItemId(request)
+    if (itemId !== undefined) assertChatItem(session, itemId)
     state.retry = undefined
     return this.#begin(session, state, request)
   }
@@ -169,11 +186,11 @@ export class ChatService {
     const active = state.active
     if (!active) throw new ChatBusyError('There is no active chat turn')
     active.interrupted = true
-    this.#setStatus(sessionId, state, 'interrupting', active.id)
+    this.#setStatus(sessionId, state, 'interrupting', active.id, requestItemId(active.request))
     void state.agent
       ?.interrupt()
       .catch((error: unknown) => this.#finishWithError(session, state, error))
-    return this.#accepted(sessionId, state, active.id)
+    return this.#accepted(sessionId, state, active.id, requestItemId(active.request))
   }
 
   isBusy(sessionId: string): boolean {
@@ -210,20 +227,23 @@ export class ChatService {
     displayMessage?: string,
   ): ChatCommandAccepted {
     const turnId = this.#idFactory()
+    state.retry = undefined
     state.active = { id: turnId, request, interrupted: false }
+    const itemId = requestItemId(request)
     if (displayMessage !== undefined) {
       this.#addEntry(session.id, state, {
         id: this.#idFactory(),
         turnId,
         createdAt: this.#now().toISOString(),
         kind: 'message',
+        ...(itemId ? { itemId } : {}),
         role: 'user',
         text: displayMessage,
       })
     }
-    this.#setStatus(session.id, state, state.agent ? 'running' : 'starting', turnId)
+    this.#setStatus(session.id, state, state.agent ? 'running' : 'starting', turnId, itemId)
     void this.#runTurn(session, state, turnId, request)
-    return this.#accepted(session.id, state, turnId)
+    return this.#accepted(session.id, state, turnId, itemId)
   }
 
   async #runTurn(
@@ -235,7 +255,12 @@ export class ChatService {
     let completed = false
     let terminalError: Extract<AgentEvent, { type: 'error' }> | undefined
     try {
-      const recovering = state.agent === undefined && state.snapshot.entries.length > 1
+      const startingAgent = state.agent === undefined
+      const hasPriorConversation = state.snapshot.entries.some(
+        (entry) => entry.kind === 'message' && entry.turnId !== turnId,
+      )
+      const recovering = startingAgent && hasPriorConversation
+      const bootstrapping = startingAgent && !hasPriorConversation
       if (!state.agent) {
         const mcp = this.options.mcp?.open(session.id, 'codex')
         try {
@@ -261,8 +286,9 @@ export class ChatService {
         this.#finishInterrupted(session.id, state, turnId)
         return
       }
-      this.#setStatus(session.id, state, 'running', turnId)
-      const input = await this.#buildInput(session, state, request, recovering)
+      const itemId = requestItemId(request)
+      this.#setStatus(session.id, state, 'running', turnId, itemId)
+      const input = await this.#buildInput(session, state, request, recovering, bootstrapping)
       if (state.active?.id !== turnId) return
       if (state.active.interrupted) {
         this.#finishInterrupted(session.id, state, turnId)
@@ -272,7 +298,7 @@ export class ChatService {
         if (state.active?.id !== turnId) break
         if (event.type === 'turn_completed') completed = true
         if (event.type === 'error') terminalError = event
-        this.#consumeAgentEvent(session.id, state, turnId, event)
+        this.#consumeAgentEvent(session.id, state, turnId, itemId, event)
       }
       if (state.active?.id !== turnId) return
       if (completed) {
@@ -292,7 +318,8 @@ export class ChatService {
   }
 
   #finishInterrupted(sessionId: string, state: ChatState, turnId: string): void {
-    this.#addNotice(sessionId, state, turnId, 'Review stopped.', false, 'info')
+    const itemId = state.active ? requestItemId(state.active.request) : undefined
+    this.#addNotice(sessionId, state, turnId, 'Review stopped.', false, 'info', itemId)
     state.active = undefined
     this.#setStatus(sessionId, state, 'idle')
   }
@@ -302,26 +329,42 @@ export class ChatService {
     state: ChatState,
     request: PersistedChatRequest,
     recovering: boolean,
+    bootstrapping: boolean,
   ): Promise<string> {
     const requested =
       request.kind === 'review'
         ? buildReviewPrompt(session, renderDiff(await this.options.diffs.get(session)))
-        : request.message
+        : request.itemId
+          ? buildItemPrompt(session, request.itemId, request.message)
+          : request.message
+    if (bootstrapping && request.kind === 'message' && request.itemId) {
+      const review = buildReviewPrompt(session, renderDiff(await this.options.diffs.get(session)))
+      return `${review}\n\nCOMMENT DISCUSSION\n${requested}`
+    }
     if (!recovering) return requested
     const transcript = state.snapshot.entries
       .filter((entry) => entry.kind === 'message')
-      .map((entry) => `${entry.role === 'user' ? 'User' : 'Assistant'}: ${entry.text}`)
+      .map(
+        (entry) =>
+          `${entry.role === 'user' ? 'User' : 'Assistant'}${entry.itemId ? ` ${itemLabel(session, entry.itemId)}` : ' [main]'}: ${entry.text}`,
+      )
       .join('\n\n')
     return `A previous ephemeral review thread was lost. Restore context from this transcript, then answer the final request.\n\n${transcript}\n\nFinal request:\n${requested}`
   }
 
-  #consumeAgentEvent(sessionId: string, state: ChatState, turnId: string, event: AgentEvent): void {
+  #consumeAgentEvent(
+    sessionId: string,
+    state: ChatState,
+    turnId: string,
+    itemId: string | undefined,
+    event: AgentEvent,
+  ): void {
     switch (event.type) {
       case 'session_started':
         state.snapshot.model = event.model
         return
       case 'assistant_delta':
-        this.#appendAssistant(sessionId, state, turnId, event.text)
+        this.#appendAssistant(sessionId, state, turnId, itemId, event.text)
         return
       case 'tool_call':
         this.#addEntry(sessionId, state, {
@@ -329,6 +372,7 @@ export class ChatService {
           turnId,
           createdAt: this.#now().toISOString(),
           kind: 'tool',
+          ...(itemId ? { itemId } : {}),
           ...(event.callId ? { callId: event.callId } : {}),
           name: event.name,
           status: 'running',
@@ -361,13 +405,20 @@ export class ChatService {
             agentErrorMessage(event),
             event.retryable,
             'error',
+            itemId,
           )
         }
         return
     }
   }
 
-  #appendAssistant(sessionId: string, state: ChatState, turnId: string, text: string): void {
+  #appendAssistant(
+    sessionId: string,
+    state: ChatState,
+    turnId: string,
+    itemId: string | undefined,
+    text: string,
+  ): void {
     const existing = [...state.snapshot.entries]
       .reverse()
       .find(
@@ -384,6 +435,7 @@ export class ChatService {
       turnId,
       createdAt: this.#now().toISOString(),
       kind: 'message',
+      ...(itemId ? { itemId } : {}),
       role: 'assistant',
       text,
     })
@@ -428,7 +480,15 @@ export class ChatService {
       lastEntry.turnId !== active.id ||
       lastEntry.message !== message
     ) {
-      this.#addNotice(session.id, state, active.id, message, true, 'error')
+      this.#addNotice(
+        session.id,
+        state,
+        active.id,
+        message,
+        true,
+        'error',
+        requestItemId(active.request),
+      )
     }
     this.#setStatus(session.id, state, 'failed')
     await this.#closeAgent(state)
@@ -441,12 +501,14 @@ export class ChatService {
     message: string,
     retryable: boolean,
     level: 'info' | 'error',
+    itemId?: string,
   ): void {
     this.#addEntry(sessionId, state, {
       id: this.#idFactory(),
       turnId,
       createdAt: this.#now().toISOString(),
       kind: 'notice',
+      ...(itemId ? { itemId } : {}),
       level,
       message,
       retryable,
@@ -463,14 +525,22 @@ export class ChatService {
     state: ChatState,
     status: ChatStatus,
     currentTurnId?: string,
+    currentItemId?: string,
   ): void {
     state.snapshot.status = status
     if (currentTurnId === undefined) delete state.snapshot.currentTurnId
     else state.snapshot.currentTurnId = currentTurnId
+    if (currentItemId === undefined) delete state.snapshot.currentItemId
+    else state.snapshot.currentItemId = currentItemId
+    const retryItemId = state.retry ? requestItemId(state.retry) : undefined
+    if (retryItemId === undefined) delete state.snapshot.retryItemId
+    else state.snapshot.retryItemId = retryItemId
     this.#publish(sessionId, state, {
       type: 'status',
       status,
       ...(currentTurnId ? { currentTurnId } : {}),
+      ...(currentItemId ? { currentItemId } : {}),
+      ...(retryItemId ? { retryItemId } : {}),
     })
   }
 
@@ -482,8 +552,18 @@ export class ChatService {
     })
   }
 
-  #accepted(sessionId: string, state: ChatState, turnId: string): ChatCommandAccepted {
-    return { sessionId, turnId, revision: state.snapshot.revision }
+  #accepted(
+    sessionId: string,
+    state: ChatState,
+    turnId: string,
+    itemId?: string,
+  ): ChatCommandAccepted {
+    return {
+      sessionId,
+      turnId,
+      revision: state.snapshot.revision,
+      ...(itemId ? { itemId } : {}),
+    }
   }
 
   #state(session: ReviewSession): ChatState {
@@ -543,6 +623,16 @@ function assertDraft(session: ReviewSession): void {
   if (session.submission) throw new ChatUnavailableError('Review submission has already started')
 }
 
+function assertChatItem(session: ReviewSession, itemId: string): void {
+  if (!itemId || !session.comments.some((comment) => comment.id === itemId)) {
+    throw new ChatItemNotFoundError('Draft comment chat item not found')
+  }
+}
+
+function requestItemId(request: PersistedChatRequest): string | undefined {
+  return request.kind === 'message' ? request.itemId : undefined
+}
+
 function agentErrorMessage(event: Extract<AgentEvent, { type: 'error' }>): string {
   return event.message ?? `Codex error: ${event.category}`
 }
@@ -571,6 +661,23 @@ function buildSystemPrompt(session: ReviewSession): string {
 
 function buildReviewPrompt(session: ReviewSession, diff: string): string {
   return `Review the pinned pull request diff below. Inspect related files when tools permit. Report findings with precise file paths and line numbers, then summarize the change.\n\nRepository: ${session.repoId}\nPull request: #${String(session.prNumber)}\nBase: ${session.baseSha}\nHead: ${session.headSha}\n\nBEGIN UNTRUSTED DIFF\n${diff}\nEND UNTRUSTED DIFF`
+}
+
+function buildItemPrompt(session: ReviewSession, itemId: string, message: string): string {
+  const comment = session.comments.find((candidate) => candidate.id === itemId)
+  if (!comment) throw new ChatItemNotFoundError('Draft comment chat item not found')
+  return `${itemLabel(session, itemId)}\nBEGIN UNTRUSTED DRAFT COMMENT\n${comment.body}\nEND UNTRUSTED DRAFT COMMENT\nRequest: ${message}`
+}
+
+function itemLabel(session: ReviewSession, itemId: string): string {
+  const index = session.comments.findIndex((comment) => comment.id === itemId)
+  if (index < 0) return `[deleted comment ${itemId}]`
+  const comment = session.comments[index]!
+  const range =
+    comment.startLine === undefined
+      ? String(comment.line)
+      : `${String(comment.startLine)}-${String(comment.line)}`
+  return `[comment #${String(index + 1)}: ${comment.path}:${range} ${comment.side}]`
 }
 
 function renderDiff(document: Awaited<ReturnType<SessionDiffService['get']>>): string {

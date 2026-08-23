@@ -12,6 +12,7 @@ type ChatEntryBase = {
   id: string
   turnId: string
   createdAt: string
+  itemId?: string
 }
 
 export type ChatMessageEntry = ChatEntryBase & {
@@ -46,12 +47,20 @@ export type ChatSnapshot = {
   model?: string
   unavailableReason?: string
   currentTurnId?: string
+  currentItemId?: string
+  retryItemId?: string
   entries: ChatEntry[]
   lastUsage?: ChatUsage
 }
 
 export type ChatStreamEvent =
-  | { type: 'status'; status: ChatStatus; currentTurnId?: string }
+  | {
+      type: 'status'
+      status: ChatStatus
+      currentTurnId?: string
+      currentItemId?: string
+      retryItemId?: string
+    }
   | { type: 'entry.added'; entry: ChatEntry }
   | { type: 'assistant.delta'; entryId: string; text: string }
   | {
@@ -72,4 +81,5 @@ export type ChatCommandAccepted = {
   sessionId: string
   turnId: string
   revision: number
+  itemId?: string
 }

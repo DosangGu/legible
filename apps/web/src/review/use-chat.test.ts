@@ -32,4 +32,39 @@ describe('applyChatEvent', () => {
     expect(snapshot.entries[0]).toMatchObject({ text: 'Part ' })
     expect(next).toMatchObject({ revision: 3, entries: [{ text: 'Part two' }] })
   })
+
+  it('tracks the active and retry conversation from status events', () => {
+    const snapshot: ChatSnapshot = {
+      sessionId: 'session-1',
+      revision: 2,
+      status: 'idle',
+      backend: 'codex',
+      entries: [],
+    }
+
+    const running = applyChatEvent(snapshot, {
+      sessionId: 'session-1',
+      revision: 3,
+      event: {
+        type: 'status',
+        status: 'running',
+        currentTurnId: 'turn-1',
+        currentItemId: 'comment-1',
+      },
+    })
+    const failed = applyChatEvent(running, {
+      sessionId: 'session-1',
+      revision: 4,
+      event: { type: 'status', status: 'failed', retryItemId: 'comment-1' },
+    })
+
+    expect(running).toMatchObject({
+      status: 'running',
+      currentTurnId: 'turn-1',
+      currentItemId: 'comment-1',
+    })
+    expect(failed).toMatchObject({ status: 'failed', retryItemId: 'comment-1' })
+    expect(failed.currentTurnId).toBeUndefined()
+    expect(failed.currentItemId).toBeUndefined()
+  })
 })

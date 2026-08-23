@@ -47,10 +47,14 @@ export function NewCommentComposer({
 
 export function DraftCommentCard({
   comment,
+  discussing,
+  onDiscuss,
   onUpdate,
   onRemove,
 }: {
   comment: DraftComment
+  discussing: boolean
+  onDiscuss(): void
   onUpdate(body: string): Promise<void>
   onRemove(): Promise<void>
 }) {
@@ -83,7 +87,11 @@ export function DraftCommentCard({
   }
 
   return (
-    <article className="draft-comment-card">
+    <article
+      className={
+        discussing ? 'draft-comment-card draft-comment-card-discussing' : 'draft-comment-card'
+      }
+    >
       <header>
         <strong>{comment.origin}</strong>
         <span>{rangeLabel(comment)}</span>
@@ -110,6 +118,9 @@ export function DraftCommentCard({
           </>
         ) : (
           <>
+            <button type="button" aria-pressed={discussing} onClick={onDiscuss}>
+              Discuss
+            </button>
             <button type="button" onClick={() => setEditing(true)}>
               Edit
             </button>
