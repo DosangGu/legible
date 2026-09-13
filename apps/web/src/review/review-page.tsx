@@ -6,7 +6,7 @@ import type {
   ReviewSession,
 } from '@legible/protocol'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 
 import {
   ApiClientError,
@@ -363,7 +363,9 @@ function ReviewWorkspace({
     <main className="review-shell">
       <header className="review-header">
         <div className="review-title">
-          <span className="brand-mark brand-mark-small">L</span>
+          <Link className="brand-mark brand-mark-small" to="/" aria-label="Return to workspace">
+            L
+          </Link>
           <div>
             <p className="eyebrow">Review session</p>
             <h1>{sessionId}</h1>
@@ -727,6 +729,7 @@ function PageState({
       <h1>{title}</h1>
       {detail ? <p>{detail}</p> : null}
       {children}
+      <Link to="/">Return to workspace</Link>
     </main>
   )
 }

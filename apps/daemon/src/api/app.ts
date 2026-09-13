@@ -1,5 +1,14 @@
 import websocket from '@fastify/websocket'
 import Fastify, { type FastifyInstance } from 'fastify'
+import { BrowserAccess } from './access.js'
+import { installWeb } from './static.js'
+import { ServiceError } from '../common/service-error.js'
+import { GitHubClientError } from '../github/client.js'
+import {
+  DirtyWorktreeError,
+  GitCommandError,
+  WorktreePathConflictError,
+} from '../worktrees/service.js'
 
 import type {
   ApiError,
@@ -41,12 +50,29 @@ export type BuildAppOptions = {
   logger?: boolean
   now?: () => Date
   startedAtMs?: number
+  access: BrowserAccess
+  webDirectory?: string
 }
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
   const now = options.now ?? (() => new Date())
   const startedAtMs = options.startedAtMs ?? now().getTime()
-  const app = Fastify({ logger: options.logger ?? false })
+  const app = Fastify({
+    logger: options.logger
+      ? {
+          redact: [
+            'req.headers.cookie',
+            'req.headers.authorization',
+            'req.body',
+            'res.headers["set-cookie"]',
+          ],
+        }
+      : false,
+    bodyLimit: 128 * 1024,
+  })
+
+  options.access.install(app)
+  if (options.webDirectory) installWeb(app, options.webDirectory)
 
   await app.register(websocket, {
     options: {
@@ -66,6 +92,32 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   app.post('/api/preflight/refresh', async () => options.services.preflight.refresh())
 
   app.get('/api/sessions', async () => options.services.sessions.list())
+
+  app.get('/api/repos', async () => options.services.repos.list())
+  app.post<{ Body: { path?: unknown } }>('/api/repos', async (request, reply) => {
+    if (typeof request.body?.path !== 'string' || request.body.path.length > 4096)
+      throw new ServiceError('invalid_repo_path', 'Enter an absolute repository path')
+    options.services.preflight.assertTools(['git'])
+    return reply.code(201).send(await options.services.repos.register(request.body.path))
+  })
+  app.get<{ Params: { owner: string; name: string }; Querystring: { page?: string } }>(
+    '/api/repos/:owner/:name/pulls',
+    async (request) => {
+      const page = request.query.page === undefined ? 1 : Number(request.query.page)
+      if (!Number.isSafeInteger(page) || page < 1 || page > 10_000)
+        throw new ServiceError('invalid_page', 'Invalid PR list page')
+      options.services.preflight.assertTools(['gh'])
+      const repo = options.services.repos.get(`${request.params.owner}/${request.params.name}`)
+      return options.services.pullRequests.listPullRequests(repo.owner, repo.name, page)
+    },
+  )
+  app.post<{ Body: unknown }>('/api/sessions', async (request, reply) => {
+    const result = await options.services.openReviews.open(request.body)
+    return reply.code(result.reused ? 200 : 201).send(result)
+  })
+  app.post<{ Params: { sessionId: string } }>('/api/sessions/:sessionId/open', async (request) =>
+    options.services.openReviews.touch(request.params.sessionId),
+  )
 
   app.get<{ Params: { sessionId: string } }>('/api/sessions/:sessionId', async (request, reply) => {
     const session = options.services.sessions.get(request.params.sessionId)
@@ -320,6 +372,47 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   })
 
   app.setErrorHandler(async (error, request, reply) => {
+    if (error instanceof ServiceError)
+      return reply
+        .code(error.statusCode)
+        .send({ error: { code: error.code, message: error.message } })
+    if (error instanceof GitHubClientError) {
+      const status =
+        error.status === 401 || error.status === 403 || error.status === 404 ? error.status : 502
+      return reply.code(status).send({
+        error: {
+          code: 'github_request_failed',
+          message:
+            status === 404
+              ? 'PR not found or inaccessible on GitHub'
+              : 'GitHub request failed. Check authentication, access, and rate limits, then retry.',
+        },
+      })
+    }
+    if (
+      error instanceof GitCommandError ||
+      error instanceof DirtyWorktreeError ||
+      error instanceof WorktreePathConflictError
+    ) {
+      return reply.code(409).send({
+        error: {
+          code: 'worktree_unavailable',
+          message:
+            'Cannot safely prepare this worktree. Check Git access and local changes, then retry.',
+        },
+      })
+    }
+    if (
+      error instanceof Error &&
+      'statusCode' in error &&
+      typeof error.statusCode === 'number' &&
+      error.statusCode >= 400 &&
+      error.statusCode < 500
+    ) {
+      return reply
+        .code(error.statusCode)
+        .send({ error: { code: 'invalid_request', message: 'Invalid request' } })
+    }
     const commentError = mapCommentError(error)
     if (commentError) return reply.code(commentError.status).send(commentError.body)
     const chatError = mapChatError(error)

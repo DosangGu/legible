@@ -71,6 +71,7 @@ export type ChatServiceOptions = {
   eventBus: EventBus
   backends: Partial<Record<AgentSpec['backend'], AgentBackend>>
   configProjection?: Pick<WorktreeConfigProjection, 'acquire'>
+  assertBackendReady?: (backend: AgentBackendKind) => void
   mcp?: McpServerProvider
   now?: () => Date
   idFactory?: () => string
@@ -186,7 +187,6 @@ export class ChatService {
     const request = state.retry
     const itemId = requestItemId(request)
     if (itemId !== undefined) assertChatItem(session, itemId)
-    state.retry = undefined
     return this.#begin(session, state, request)
   }
 
@@ -237,6 +237,7 @@ export class ChatService {
     request: PersistedChatRequest,
     displayMessage?: string,
   ): ChatCommandAccepted {
+    this.options.assertBackendReady?.(session.config.main.backend)
     const turnId = this.#idFactory()
     state.retry = undefined
     state.active = { id: turnId, request, interrupted: false }

@@ -6,6 +6,7 @@ import {
 } from '@legible/protocol'
 
 import type { CommandResult, CommandRunner } from './command-runner.js'
+import { ServiceError } from '../common/service-error.js'
 
 const commandTimeoutMs = 5_000
 
@@ -71,6 +72,18 @@ export class PreflightService {
 
   assertReady(): void {
     if (this.#report.status !== 'ready') throw new PreflightNotReadyError()
+  }
+
+  assertTools(required: readonly PreflightTool[]): void {
+    const failed = required.filter(
+      (tool) => this.#report.checks.find((check) => check.tool === tool)?.status !== 'ready',
+    )
+    if (failed.length)
+      throw new ServiceError(
+        'tools_not_ready',
+        `Required tools are not ready: ${failed.join(', ')}. Check setup and refresh status.`,
+        409,
+      )
   }
 
   refresh(): Promise<PreflightReport> {

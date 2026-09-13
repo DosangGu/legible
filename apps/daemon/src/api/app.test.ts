@@ -1,6 +1,6 @@
 import { AgentBackendKind } from '@legible/protocol'
 import type { DaemonEventEnvelope, PreflightReport } from '@legible/protocol'
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, InjectOptions } from 'fastify'
 import type { WebSocket } from 'ws'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -17,6 +17,7 @@ import { createDaemon, type DaemonRuntime } from '../server.js'
 import { ReadyCommandRunner, reviewSession } from '../testing/fixtures.js'
 
 const runtimes: DaemonRuntime[] = []
+const browserCookies = new WeakMap<FastifyInstance, string>()
 
 afterEach(async () => {
   await Promise.all(runtimes.splice(0).map(({ app }) => app.close()))
@@ -26,17 +27,17 @@ describe('daemon API', () => {
   it('exposes health, preflight, sessions, and stable errors', async () => {
     const runtime = await makeRuntime()
 
-    const health = await runtime.app.inject({ method: 'GET', url: '/api/health' })
+    const health = await inject(runtime, { method: 'GET', url: '/api/health' })
     expect(health.statusCode).toBe(200)
     expect(health.json()).toEqual({ status: 'ready', version: '1.2.3', uptimeSeconds: 0 })
 
-    const preflight = await runtime.app.inject({ method: 'GET', url: '/api/preflight' })
+    const preflight = await inject(runtime, { method: 'GET', url: '/api/preflight' })
     expect(preflight.json<PreflightReport>().checks).toHaveLength(4)
 
-    const sessions = await runtime.app.inject({ method: 'GET', url: '/api/sessions' })
+    const sessions = await inject(runtime, { method: 'GET', url: '/api/sessions' })
     expect(sessions.json()).toEqual([])
 
-    const missing = await runtime.app.inject({ method: 'GET', url: '/missing' })
+    const missing = await inject(runtime, { method: 'GET', url: '/missing' })
     expect(missing.statusCode).toBe(404)
     expect(missing.json()).toEqual({
       error: { code: 'not_found', message: 'Route not found' },
@@ -55,11 +56,11 @@ describe('daemon API', () => {
     }
     const runtime = await makeRuntime(runner)
 
-    const degraded = await runtime.app.inject({ method: 'GET', url: '/api/health' })
+    const degraded = await inject(runtime, { method: 'GET', url: '/api/health' })
     expect(degraded.json()).toMatchObject({ status: 'degraded' })
 
     authenticated = true
-    const refreshed = await runtime.app.inject({
+    const refreshed = await inject(runtime, {
       method: 'POST',
       url: '/api/preflight/refresh',
     })
@@ -78,7 +79,7 @@ describe('daemon API', () => {
     }
 
     const runtime = await makeRuntime(runner)
-    const health = await runtime.app.inject({ method: 'GET', url: '/api/health' })
+    const health = await inject(runtime, { method: 'GET', url: '/api/health' })
 
     expect(health.statusCode).toBe(200)
     expect(health.json()).toMatchObject({ status: 'ready' })
@@ -98,7 +99,7 @@ describe('daemon API', () => {
       reviewSession({ baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40) }),
     )
 
-    const response = await runtime.app.inject({
+    const response = await inject(runtime, {
       method: 'GET',
       url: '/api/sessions/session-1/diff',
     })
@@ -122,7 +123,7 @@ describe('daemon API', () => {
     }
     const runtime = await makeRuntime(new ReadyCommandRunner(), source)
 
-    const missing = await runtime.app.inject({
+    const missing = await inject(runtime, {
       method: 'GET',
       url: '/api/sessions/missing/diff',
     })
@@ -134,7 +135,7 @@ describe('daemon API', () => {
     runtime.services.sessions.add(
       reviewSession({ baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40) }),
     )
-    const unavailable = await runtime.app.inject({
+    const unavailable = await inject(runtime, {
       method: 'GET',
       url: '/api/sessions/session-1/diff',
     })
@@ -164,7 +165,7 @@ describe('daemon API', () => {
       reviewSession({ baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40) }),
     )
 
-    const response = await runtime.app.inject({
+    const response = await inject(runtime, {
       method: 'GET',
       url: '/api/sessions/session-1/file?path=example.ts&side=RIGHT',
     })
@@ -179,14 +180,14 @@ describe('daemon API', () => {
       byteLength: 6,
     })
 
-    const unauthorized = await runtime.app.inject({
+    const unauthorized = await inject(runtime, {
       method: 'GET',
       url: '/api/sessions/session-1/file?path=.git%2Fconfig&side=RIGHT',
     })
     expect(unauthorized.statusCode).toBe(404)
     expect(unauthorized.json()).toMatchObject({ error: { code: 'file_not_found' } })
 
-    const wrongSide = await runtime.app.inject({
+    const wrongSide = await inject(runtime, {
       method: 'GET',
       url: '/api/sessions/session-1/file?path=example.ts&side=MIDDLE',
     })
@@ -209,7 +210,7 @@ describe('daemon API', () => {
       reviewSession({ baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40) }),
     )
 
-    const response = await runtime.app.inject({
+    const response = await inject(runtime, {
       method: 'GET',
       url: '/api/sessions/session-1/file?path=example.ts&side=RIGHT',
     })
@@ -229,7 +230,7 @@ describe('daemon API', () => {
       reviewSession({ baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40) }),
     )
 
-    const response = await runtime.app.inject({
+    const response = await inject(runtime, {
       method: 'GET',
       url: '/api/sessions/session-1/diff',
     })
@@ -264,7 +265,7 @@ describe('daemon API', () => {
     })
 
     const preflightEventPromise = nextMessage(socket)
-    await runtime.app.inject({ method: 'POST', url: '/api/preflight/refresh' })
+    await inject(runtime, { method: 'POST', url: '/api/preflight/refresh' })
     await expect(preflightEventPromise).resolves.toMatchObject({
       type: 'preflight.updated',
       sequence: 3,
@@ -320,7 +321,7 @@ describe('daemon API', () => {
     const { socket } = await connectEvents(runtime.app)
     const streamed = nextMessage(socket)
 
-    const started = await runtime.app.inject({
+    const started = await inject(runtime, {
       method: 'POST',
       url: '/api/sessions/session-1/chat/start',
     })
@@ -331,7 +332,7 @@ describe('daemon API', () => {
       payload: { sessionId: 'session-1', revision: 1 },
     })
     await new Promise((resolve) => setTimeout(resolve, 0))
-    const snapshot = await runtime.app.inject({
+    const snapshot = await inject(runtime, {
       method: 'GET',
       url: '/api/sessions/session-1/chat',
     })
@@ -351,7 +352,7 @@ describe('daemon API', () => {
       reviewSession({ baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40) }),
     )
 
-    const created = await runtime.app.inject({
+    const created = await inject(runtime, {
       method: 'POST',
       url: '/api/sessions/session-1/comments',
       payload: { path: 'example.ts', line: 1, side: 'RIGHT', body: 'Draft' },
@@ -360,17 +361,17 @@ describe('daemon API', () => {
     expect(created.json()).toMatchObject({ origin: 'human', body: 'Draft' })
     const id = created.json<{ id: string }>().id
 
-    const edited = await runtime.app.inject({
+    const edited = await inject(runtime, {
       method: 'PATCH',
       url: `/api/sessions/session-1/comments/${id}`,
       payload: { body: 'Updated draft' },
     })
     expect(edited.json()).toMatchObject({ body: 'Updated draft' })
     expect(
-      (await runtime.app.inject({ method: 'GET', url: '/api/sessions/session-1/comments' })).json(),
+      (await inject(runtime, { method: 'GET', url: '/api/sessions/session-1/comments' })).json(),
     ).toEqual([expect.objectContaining({ id, body: 'Updated draft' })])
 
-    const removed = await runtime.app.inject({
+    const removed = await inject(runtime, {
       method: 'DELETE',
       url: `/api/sessions/session-1/comments/${id}`,
     })
@@ -387,7 +388,7 @@ describe('daemon API', () => {
       const lease = runtime.services.mcp.open('session-1', backend)
       const authorization = lease.spec.transport === 'http' ? lease.spec.headers?.Authorization : ''
 
-      const unauthorized = await runtime.app.inject({
+      const unauthorized = await inject(runtime, {
         method: 'POST',
         url: '/api/sessions/session-1/mcp',
         headers: { host: 'localhost' },
@@ -395,7 +396,7 @@ describe('daemon API', () => {
       })
       expect(unauthorized.statusCode).toBe(401)
 
-      const listed = await runtime.app.inject({
+      const listed = await inject(runtime, {
         method: 'POST',
         url: '/api/sessions/session-1/mcp',
         headers: mcpHeaders(authorization),
@@ -408,7 +409,7 @@ describe('daemon API', () => {
         ]),
       })
 
-      const added = await runtime.app.inject({
+      const added = await inject(runtime, {
         method: 'POST',
         url: '/api/sessions/session-1/mcp',
         headers: mcpHeaders(authorization),
@@ -432,7 +433,7 @@ describe('daemon API', () => {
       ])
       const commentId = runtime.services.comments.list('session-1')[0]!.id
 
-      const edited = await runtime.app.inject({
+      const edited = await inject(runtime, {
         method: 'POST',
         url: '/api/sessions/session-1/mcp',
         headers: mcpHeaders(authorization),
@@ -445,7 +446,7 @@ describe('daemon API', () => {
         structuredContent: { comment: { id: commentId, body: 'Revised agent draft' } },
       })
 
-      const comments = await runtime.app.inject({
+      const comments = await inject(runtime, {
         method: 'POST',
         url: '/api/sessions/session-1/mcp',
         headers: mcpHeaders(authorization),
@@ -462,7 +463,7 @@ describe('daemon API', () => {
 
       const focusEvents: DaemonEventEnvelope[] = []
       const unsubscribe = runtime.services.eventBus.subscribe((event) => focusEvents.push(event))
-      const focused = await runtime.app.inject({
+      const focused = await inject(runtime, {
         method: 'POST',
         url: '/api/sessions/session-1/mcp',
         headers: mcpHeaders(authorization),
@@ -482,7 +483,7 @@ describe('daemon API', () => {
       )
       unsubscribe()
 
-      const removedByAgent = await runtime.app.inject({
+      const removedByAgent = await inject(runtime, {
         method: 'POST',
         url: '/api/sessions/session-1/mcp',
         headers: mcpHeaders(authorization),
@@ -495,7 +496,7 @@ describe('daemon API', () => {
         structuredContent: { removedId: commentId },
       })
 
-      const wrongSession = await runtime.app.inject({
+      const wrongSession = await inject(runtime, {
         method: 'POST',
         url: '/api/sessions/another-session/mcp',
         headers: mcpHeaders(authorization),
@@ -503,7 +504,7 @@ describe('daemon API', () => {
       })
       expect(wrongSession.statusCode).toBe(401)
 
-      const wrongHost = await runtime.app.inject({
+      const wrongHost = await inject(runtime, {
         method: 'POST',
         url: '/api/sessions/session-1/mcp',
         headers: { ...mcpHeaders(authorization), host: 'attacker.example' },
@@ -512,7 +513,7 @@ describe('daemon API', () => {
       expect(wrongHost.statusCode).toBe(403)
 
       await lease.close()
-      const expired = await runtime.app.inject({
+      const expired = await inject(runtime, {
         method: 'POST',
         url: '/api/sessions/session-1/mcp',
         headers: mcpHeaders(authorization),
@@ -552,7 +553,7 @@ describe('daemon API', () => {
       reviewSession({ baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40) }),
     )
 
-    const response = await runtime.app.inject({
+    const response = await inject(runtime, {
       method: 'POST',
       url: '/api/sessions/session-1/submission',
       payload: { event: 'COMMENT', body: 'Summary' },
@@ -589,7 +590,26 @@ async function makeRuntime(
     now: () => new Date('2026-08-21T03:00:00.000Z'),
   })
   runtimes.push(runtime)
+  const auth = await runtime.app.inject({
+    method: 'POST',
+    url: '/api/auth',
+    headers: { host: 'localhost', origin: 'http://localhost' },
+    payload: { token: runtime.access.bootstrapToken },
+  })
+  browserCookies.set(runtime.app, String(auth.headers['set-cookie']).split(';')[0]!)
   return runtime
+}
+
+function inject(runtime: DaemonRuntime, options: InjectOptions) {
+  return runtime.app.inject({
+    ...options,
+    headers: {
+      host: 'localhost',
+      origin: 'http://localhost',
+      cookie: browserCookies.get(runtime.app)!,
+      ...options.headers,
+    },
+  })
 }
 
 const exampleDiff = [
@@ -655,7 +675,9 @@ async function connectEvents(
   })
   const socket = await app.injectWS(
     '/api/events',
-    {},
+    {
+      headers: { host: 'localhost', origin: 'http://localhost', cookie: browserCookies.get(app)! },
+    },
     {
       onInit(client) {
         client.once('message', (data) => {

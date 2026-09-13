@@ -1,12 +1,15 @@
 import { Link, Route, Routes } from 'react-router-dom'
 
 import { ReviewPage } from './review/review-page.js'
+import { HomePage } from './home/home-page.js'
+import { RepoPage } from './home/repo-page.js'
 
 export function App() {
   return (
     <Routes>
       <Route path="/review/:sessionId" element={<ReviewPage />} />
-      <Route path="/" element={<Placeholder title="No review selected" />} />
+      <Route path="/" element={<HomePage />} />
+      <Route path="/repos/:owner/:name" element={<RepoPage />} />
       <Route path="*" element={<Placeholder title="Page not found" />} />
     </Routes>
   )

@@ -1,6 +1,11 @@
 import { Octokit } from '@octokit/rest'
 
-import type { DraftComment, ReviewEvent } from '@legible/protocol'
+import type {
+  DraftComment,
+  ReviewEvent,
+  PullRequestSummary,
+  PullRequestPage,
+} from '@legible/protocol'
 
 import type { CommandRunner } from '../preflight/command-runner.js'
 
@@ -27,6 +32,12 @@ export interface GitHubClient {
   listReviews(owner: string, repo: string, pullNumber: number): Promise<GitHubReview[]>
 }
 
+export type PullRequestDetails = PullRequestSummary & { headSha: string; baseSha: string }
+export interface PullRequestReader {
+  listPullRequests(owner: string, repo: string, page: number): Promise<PullRequestPage>
+  getPullRequest(owner: string, repo: string, pullNumber: number): Promise<PullRequestDetails>
+}
+
 export class GitHubClientError extends Error {
   constructor(
     message: string,
@@ -38,8 +49,44 @@ export class GitHubClientError extends Error {
   }
 }
 
-export class OctokitGitHubClient implements GitHubClient {
+export class OctokitGitHubClient implements GitHubClient, PullRequestReader {
   constructor(private readonly runner: CommandRunner) {}
+
+  async listPullRequests(owner: string, repo: string, page: number): Promise<PullRequestPage> {
+    const octokit = await this.#octokit()
+    try {
+      const response = await octokit.rest.pulls.list({
+        owner,
+        repo,
+        state: 'open',
+        sort: 'updated',
+        direction: 'desc',
+        per_page: 30,
+        page,
+      })
+      return {
+        items: response.data.map(normalizePullRequest),
+        page,
+        hasNextPage: Boolean(response.headers.link?.includes('rel="next"')),
+      }
+    } catch (error) {
+      throw githubError(error)
+    }
+  }
+
+  async getPullRequest(
+    owner: string,
+    repo: string,
+    pullNumber: number,
+  ): Promise<PullRequestDetails> {
+    const octokit = await this.#octokit()
+    try {
+      const { data } = await octokit.rest.pulls.get({ owner, repo, pull_number: pullNumber })
+      return { ...normalizePullRequest(data), headSha: data.head.sha, baseSha: data.base.sha }
+    } catch (error) {
+      throw githubError(error)
+    }
+  }
 
   async getPullHead(owner: string, repo: string, pullNumber: number): Promise<string> {
     const octokit = await this.#octokit()
@@ -113,6 +160,30 @@ export class OctokitGitHubClient implements GitHubClient {
       auth: result.stdout.trim(),
       request: { headers: { 'x-github-api-version': '2026-03-10' } },
     })
+  }
+}
+
+function normalizePullRequest(data: {
+  number: number
+  title: string
+  html_url: string
+  user: { login: string } | null
+  base: { ref: string }
+  head: { ref: string }
+  draft?: boolean
+  state: string
+  updated_at: string
+}): PullRequestSummary {
+  return {
+    number: data.number,
+    title: data.title,
+    url: data.html_url,
+    author: data.user?.login ?? 'unknown',
+    baseRef: data.base.ref,
+    headRef: data.head.ref,
+    draft: data.draft ?? false,
+    state: data.state === 'open' ? 'open' : 'closed',
+    updatedAt: data.updated_at,
   }
 }
 

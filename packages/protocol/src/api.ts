@@ -1,4 +1,4 @@
-import type { AgentBackendKind, ReviewSession } from './model.js'
+import type { AgentBackendKind, ReviewSession, Repo } from './model.js'
 import type { ChatEventPayload } from './chat.js'
 import type { DiffSide } from './diff.js'
 
@@ -49,6 +49,7 @@ export type ReviewFocusRequest = {
 export type DaemonEvent =
   | { type: 'daemon.snapshot'; payload: DaemonSnapshot }
   | { type: 'preflight.updated'; payload: PreflightReport }
+  | { type: 'repo.updated'; payload: Repo }
   | { type: 'session.added'; payload: ReviewSession }
   | { type: 'session.updated'; payload: ReviewSession }
   | { type: 'session.removed'; payload: { id: string } }

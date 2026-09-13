@@ -6,7 +6,7 @@ import { GitHubClientError, type GitHubClient, type GitHubReview } from '../gith
 import type { SessionMutationQueue } from '../sessions/mutation-queue.js'
 import type { SessionPersistence } from '../sessions/persistence.js'
 import type { SessionRegistry } from '../sessions/session-registry.js'
-import type { WorktreeService } from '../worktrees/service.js'
+import type { ReviewWorktrees } from '../worktrees/manager.js'
 
 const maxBodyBytes = 64 * 1024
 
@@ -35,7 +35,7 @@ export class SubmissionService {
     private readonly mutations: SessionMutationQueue,
     private readonly comments: CommentService,
     private readonly chats: ChatService,
-    private readonly worktrees: WorktreeService,
+    private readonly worktrees: Pick<ReviewWorktrees, 'remove'>,
     private readonly github: GitHubClient,
     private readonly now: () => Date = () => new Date(),
   ) {}
@@ -165,7 +165,7 @@ export class SubmissionService {
     let cleanup: Extract<ReviewSubmission, { status: 'submitted' }>['cleanup']
     try {
       await this.chats.seal(session.id)
-      await this.worktrees.remove(session.prNumber)
+      await this.worktrees.remove(session)
       cleanup = { status: 'complete' }
     } catch (error) {
       cleanup = {

@@ -2,6 +2,7 @@ import type { DaemonEventEnvelope } from '@legible/protocol'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 import { DaemonEventsContext, type DaemonEvents, type EventListener } from './events-context.js'
+import { ApiClientError, request } from './api.js'
 
 export function DaemonEventsProvider({ children }: { children: ReactNode }) {
   const listeners = useRef(new Set<EventListener>())
@@ -31,8 +32,16 @@ export function DaemonEventsProvider({ children }: { children: ReactNode }) {
       })
       socket.addEventListener('close', () => {
         if (disposed) return
-        reconnectTimer = window.setTimeout(connect, reconnectDelay)
-        reconnectDelay = Math.min(reconnectDelay * 2, 5_000)
+        void request('/api/auth')
+          .catch((error: unknown) => {
+            if (error instanceof ApiClientError && error.code === 'browser_auth_required')
+              disposed = true
+          })
+          .finally(() => {
+            if (disposed) return
+            reconnectTimer = window.setTimeout(connect, reconnectDelay)
+            reconnectDelay = Math.min(reconnectDelay * 2, 5_000)
+          })
       })
     }
 

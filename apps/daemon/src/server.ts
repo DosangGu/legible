@@ -1,10 +1,12 @@
 import type { FastifyInstance } from 'fastify'
+import { fileURLToPath } from 'node:url'
+import { BrowserAccess, isLoopback } from './api/access.js'
 
 import type { FileSource } from './diffs/file-source.js'
 import type { DiffSource } from './diffs/source.js'
 import type { CommandRunner } from './preflight/command-runner.js'
 import type { AgentBackend } from './agents/types.js'
-import type { GitHubClient } from './github/client.js'
+import type { GitHubClient, PullRequestReader } from './github/client.js'
 import { buildApp } from './api/app.js'
 import { createDaemonServices, type DaemonServices } from './services.js'
 
@@ -13,7 +15,10 @@ export const daemonPort = 7777
 
 export type StartDaemonOptions = {
   version: string
-  repoPath: string
+  repoPath?: string
+  browseRoot?: string
+  pullRequestReader?: PullRequestReader
+  webDirectory?: string
   host?: string
   port?: number
   logger?: boolean
@@ -31,12 +36,15 @@ export type StartDaemonOptions = {
 export type DaemonRuntime = {
   app: FastifyInstance
   services: DaemonServices
+  access: BrowserAccess
 }
 
 export async function createDaemon(options: StartDaemonOptions): Promise<DaemonRuntime> {
   const requestedPort = options.port ?? daemonPort
   const services = createDaemonServices({
-    repoPath: options.repoPath,
+    ...(options.repoPath ? { repoPath: options.repoPath } : {}),
+    ...(options.browseRoot ? { browseRoot: options.browseRoot } : {}),
+    ...(options.pullRequestReader ? { pullRequestReader: options.pullRequestReader } : {}),
     ...(options.runner ? { runner: options.runner } : {}),
     ...(options.diffSource ? { diffSource: options.diffSource } : {}),
     ...(options.fileSource ? { fileSource: options.fileSource } : {}),
@@ -48,18 +56,24 @@ export async function createDaemon(options: StartDaemonOptions): Promise<DaemonR
     ...(options.githubClient ? { githubClient: options.githubClient } : {}),
     mcpOrigin: `http://127.0.0.1:${String(requestedPort)}`,
   })
+  await services.repos.restore()
   const configRecovery = await services.configProjection.recover()
   await services.persistence.restore()
   await services.preflight.refresh()
+  // Preserve the old programmatic entry point without requiring a repo at daemon startup.
+  if (options.repoPath) await services.repos.register(options.repoPath).catch(() => undefined)
   for (const session of services.sessions.list()) {
     if (session.submission?.status === 'submitting' || session.submission?.status === 'uncertain') {
       await services.submissions.reconcile(session.id).catch(() => undefined)
     }
   }
 
+  const access = new BrowserAccess()
   const app = await buildApp({
     services,
     version: options.version,
+    access,
+    ...(options.webDirectory ? { webDirectory: options.webDirectory } : {}),
     logger: options.logger ?? false,
     ...(options.now ? { now: options.now } : {}),
   })
@@ -94,11 +108,17 @@ export async function createDaemon(options: StartDaemonOptions): Promise<DaemonR
     app.log.warn({ err: error }, 'Startup worktree sweep failed')
   }
 
-  return { app, services }
+  return { app, services, access }
 }
 
 export async function startDaemon(options: StartDaemonOptions): Promise<DaemonRuntime> {
-  const runtime = await createDaemon(options)
+  if (!isLoopback(options.host ?? daemonHost))
+    throw new Error('Only loopback binding is supported; use an SSH tunnel for remote access')
+  const runtime = await createDaemon({
+    ...options,
+    webDirectory:
+      options.webDirectory ?? fileURLToPath(new URL('../../web/dist/', import.meta.url)),
+  })
   await runtime.app.listen({
     host: options.host ?? daemonHost,
     port: options.port ?? daemonPort,

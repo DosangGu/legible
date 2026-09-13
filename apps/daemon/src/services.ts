@@ -11,7 +11,7 @@ import { NodeGitFileSource, type FileSource } from './diffs/file-source.js'
 import { SessionDiffService } from './diffs/service.js'
 import { NodeGitDiffSource, type DiffSource } from './diffs/source.js'
 import { EventBus } from './events/event-bus.js'
-import { OctokitGitHubClient, type GitHubClient } from './github/client.js'
+import { OctokitGitHubClient, type GitHubClient, type PullRequestReader } from './github/client.js'
 import { ReviewMcpServer } from './mcp/server.js'
 import { NodeCommandRunner, type CommandRunner } from './preflight/command-runner.js'
 import { PreflightService } from './preflight/service.js'
@@ -19,12 +19,17 @@ import { SessionRegistry } from './sessions/session-registry.js'
 import { SessionPersistence } from './sessions/persistence.js'
 import { SessionMutationQueue } from './sessions/mutation-queue.js'
 import { SessionStore } from './sessions/store.js'
-import { WorktreeService } from './worktrees/service.js'
+import { WorktreeManager } from './worktrees/manager.js'
+import { RepositoryService } from './repos/service.js'
+import { OpenReviewService } from './sessions/open-service.js'
 import { WorktreeConfigProjection } from './worktrees/config-projection.js'
 import { SubmissionService } from './submissions/service.js'
 
 export type DaemonServices = {
-  repoPath: string
+  repoPath?: string
+  repos: RepositoryService
+  pullRequests: PullRequestReader
+  openReviews: OpenReviewService
   agents: Record<AgentBackendKind, AgentBackend>
   chats: ChatService
   comments: CommentService
@@ -37,11 +42,13 @@ export type DaemonServices = {
   persistence: SessionPersistence
   submissions: SubmissionService
   configProjection: WorktreeConfigProjection
-  worktrees: WorktreeService
+  worktrees: WorktreeManager
 }
 
 export type CreateServicesOptions = {
-  repoPath: string
+  repoPath?: string
+  browseRoot?: string
+  pullRequestReader?: PullRequestReader
   runner?: CommandRunner
   diffSource?: DiffSource
   fileSource?: FileSource
@@ -72,9 +79,11 @@ export function createDaemonServices(options: CreateServicesOptions): DaemonServ
     ...(options.now ? { now: options.now } : {}),
     onUpdated: publishPreflight,
   })
-  const worktrees = new WorktreeService({
-    repoPath: options.repoPath,
-    runner,
+  const repos = new RepositoryService(runner, eventBus, {
+    ...(options.stateDirectory ? { stateDirectory: options.stateDirectory } : {}),
+    ...(options.browseRoot ? { browseRoot: options.browseRoot } : {}),
+  })
+  const worktrees = new WorktreeManager(repos, runner, {
     ...(options.stateDirectory ? { stateDirectory: options.stateDirectory } : {}),
     ...(options.worktreeTtlMs !== undefined ? { ttlMs: options.worktreeTtlMs } : {}),
     ...(options.now ? { now: options.now } : {}),
@@ -102,6 +111,7 @@ export function createDaemonServices(options: CreateServicesOptions): DaemonServ
     eventBus,
     backends: { [AgentBackendKind.Codex]: codex, [AgentBackendKind.Claude]: claude },
     configProjection,
+    assertBackendReady: (backend) => preflight.assertTools([backend]),
     mcp: mcpProvider,
     ...(options.now ? { now: options.now } : {}),
   })
@@ -126,6 +136,18 @@ export function createDaemonServices(options: CreateServicesOptions): DaemonServ
     eventBus,
   })
   mcpHolder.server = reviewMcp
+  const github = new OctokitGitHubClient(runner)
+  const pullRequests = options.pullRequestReader ?? github
+  const openReviews = new OpenReviewService(
+    repos,
+    pullRequests,
+    worktrees,
+    sessions,
+    persistence,
+    mutations,
+    preflight,
+    options.now,
+  )
   const submissions = new SubmissionService(
     sessions,
     persistence,
@@ -133,12 +155,15 @@ export function createDaemonServices(options: CreateServicesOptions): DaemonServ
     comments,
     chats,
     worktrees,
-    options.githubClient ?? new OctokitGitHubClient(runner),
+    options.githubClient ?? github,
     options.now ?? (() => new Date()),
   )
 
   return {
-    repoPath: options.repoPath,
+    ...(options.repoPath ? { repoPath: options.repoPath } : {}),
+    repos,
+    pullRequests,
+    openReviews,
     agents: { [AgentBackendKind.Codex]: codex, [AgentBackendKind.Claude]: claude },
     chats,
     comments,

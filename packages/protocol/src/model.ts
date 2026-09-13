@@ -22,7 +22,25 @@ export type ReviewSession = {
   comments: DraftComment[]
   submission?: ReviewSubmission
   createdAt: string
+  lastOpenedAt?: string
+  pullRequest?: { title: string; url: string }
 }
+
+export type PullRequestSummary = {
+  number: number
+  title: string
+  url: string
+  author: string
+  baseRef: string
+  headRef: string
+  draft: boolean
+  state: 'open' | 'closed'
+  updatedAt: string
+}
+
+export type PullRequestPage = { items: PullRequestSummary[]; page: number; hasNextPage: boolean }
+export type CreateSessionRequest = { repoId: string; prNumber: number; config: ReviewConfig }
+export type CreateSessionResponse = { session: ReviewSession; reused: boolean }
 
 export type ReviewEvent = 'COMMENT' | 'REQUEST_CHANGES' | 'APPROVE'
 

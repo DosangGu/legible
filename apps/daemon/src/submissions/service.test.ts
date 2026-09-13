@@ -10,7 +10,7 @@ import { GitHubClientError } from '../github/client.js'
 import { createDaemonServices, type DaemonServices } from '../services.js'
 import { SessionMutationQueue } from '../sessions/mutation-queue.js'
 import { reviewSession } from '../testing/fixtures.js'
-import type { WorktreeService } from '../worktrees/service.js'
+import type { ReviewWorktrees } from '../worktrees/manager.js'
 import { StaleHeadError, SubmissionService } from './service.js'
 
 const openServices: DaemonServices[] = []
@@ -193,7 +193,7 @@ async function setup(
     headSha: 'b'.repeat(40),
   })
   services.sessions.add(session)
-  const worktrees = { remove } as unknown as WorktreeService
+  const worktrees: Pick<ReviewWorktrees, 'remove'> = { remove }
   return {
     services,
     service: new SubmissionService(

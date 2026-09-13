@@ -2,6 +2,10 @@ export { AgentBackendKind } from './model.js'
 
 export type {
   AgentSpec,
+  CreateSessionRequest,
+  CreateSessionResponse,
+  PullRequestSummary,
+  PullRequestPage,
   CreateDraftCommentRequest,
   DraftComment,
   Repo,

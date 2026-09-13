@@ -9,6 +9,11 @@ import type {
   ReviewFileContent,
   ReviewSession,
   SubmitReviewRequest,
+  Repo,
+  PullRequestPage,
+  CreateSessionRequest,
+  CreateSessionResponse,
+  PreflightReport,
 } from '@legible/protocol'
 
 export class ApiClientError extends Error {
@@ -149,9 +154,43 @@ function chatCommand(
   )
 }
 
-async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
+export function fetchRepos(signal?: AbortSignal): Promise<Repo[]> {
+  return request('/api/repos', signal ? { signal } : {})
+}
+export function registerRepo(path: string): Promise<Repo> {
+  return request('/api/repos', { method: 'POST', body: JSON.stringify({ path }) })
+}
+export function fetchSessions(signal?: AbortSignal): Promise<ReviewSession[]> {
+  return request('/api/sessions', signal ? { signal } : {})
+}
+export function fetchPreflight(signal?: AbortSignal): Promise<PreflightReport> {
+  return request('/api/preflight', signal ? { signal } : {})
+}
+export function refreshPreflight(): Promise<PreflightReport> {
+  return request('/api/preflight/refresh', { method: 'POST' })
+}
+export function fetchPullRequests(
+  owner: string,
+  name: string,
+  page: number,
+  signal?: AbortSignal,
+): Promise<PullRequestPage> {
+  return request(
+    `/api/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls?page=${String(page)}`,
+    signal ? { signal } : {},
+  )
+}
+export function openReview(input: CreateSessionRequest): Promise<CreateSessionResponse> {
+  return request('/api/sessions', { method: 'POST', body: JSON.stringify(input) })
+}
+export function touchSession(id: string): Promise<ReviewSession> {
+  return request(`/api/sessions/${encodeURIComponent(id)}/open`, { method: 'POST' })
+}
+
+export async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(url, {
     ...options,
+    credentials: 'same-origin',
     headers: {
       accept: 'application/json',
       ...(options.body === undefined ? {} : { 'content-type': 'application/json' }),
@@ -169,6 +208,8 @@ async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
   } catch {
     // The stable fallback below covers non-JSON proxy and daemon failures.
   }
+  if (response.status === 401 && error?.error.code === 'browser_auth_required')
+    window.dispatchEvent(new Event('legible:auth-required'))
   throw new ApiClientError(
     error?.error.message ?? `Request failed with status ${String(response.status)}`,
     response.status,

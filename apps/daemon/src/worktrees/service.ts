@@ -1,6 +1,7 @@
 import { homedir } from 'node:os'
 import { lstat, mkdir, readdir, realpath, utimes } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { ServiceError } from '../common/service-error.js'
 
 import {
   NodeCommandRunner,
@@ -109,6 +110,81 @@ export class WorktreeService {
     })
     this.#preparing.set(prNumber, preparing)
     return preparing
+  }
+
+  /** Caller serializes by the clone's common Git directory. Never use shared FETCH_HEAD. */
+  async preparePinned(input: {
+    number: number
+    headSha: string
+    baseSha: string
+    baseRef: string
+  }): Promise<PreparedWorktree & { baseSha: string }> {
+    assertPullRequestNumber(input.number)
+    if (!/^[a-f0-9]{40,64}$/u.test(input.headSha) || !/^[a-f0-9]{40,64}$/u.test(input.baseSha))
+      throw new ServiceError('invalid_revision', 'GitHub returned an invalid revision', 502)
+    const context = await this.#context()
+    await this.#git(['check-ref-format', `refs/heads/${input.baseRef}`], context.repoPath)
+    const target = worktreePath(context.repoRoot, input.number)
+    const registered = await this.#registeredWorktrees(context.repoPath)
+    const previous = registered.get(target)
+    if (!previous && (await pathExists(target))) throw new WorktreePathConflictError(target)
+    if (previous) {
+      const stats = await safeLstat(target)
+      if (!stats?.isDirectory() || stats.isSymbolicLink())
+        throw new WorktreePathConflictError(target)
+      await this.#assertClean(target)
+      const head = await this.#gitStdout(['rev-parse', 'HEAD'], target)
+      if (head !== input.headSha)
+        throw new ServiceError(
+          'pinned_worktree_conflict',
+          'An existing worktree has a different pinned head; it will not be reset',
+          409,
+        )
+    }
+    const prefix = `refs/legible/pull/${String(input.number)}`
+    await this.#git(
+      [
+        '-c',
+        'core.hooksPath=/dev/null',
+        'fetch',
+        '--no-tags',
+        '--no-write-fetch-head',
+        'origin',
+        `+refs/pull/${String(input.number)}/head:${prefix}/head`,
+        `+refs/heads/${input.baseRef}:${prefix}/base`,
+      ],
+      context.repoPath,
+    )
+    const head = await this.#gitStdout(['rev-parse', `${prefix}/head`], context.repoPath)
+    const base = await this.#gitStdout(['rev-parse', `${prefix}/base`], context.repoPath)
+    if (head !== input.headSha || base !== input.baseSha)
+      throw new ServiceError(
+        'pr_changed',
+        'The PR changed while preparing it. Retry to load its current revisions.',
+        409,
+      )
+    let baseSha: string
+    try {
+      baseSha = await this.#gitStdout(['merge-base', base, head], context.repoPath)
+    } catch {
+      throw new ServiceError(
+        'merge_base_unavailable',
+        'Cannot determine merge-base. Fetch the missing Git history in your checkout and retry.',
+        409,
+      )
+    }
+    if (!/^[a-f0-9]{40,64}$/u.test(baseSha))
+      throw new ServiceError('merge_base_unavailable', 'Git returned an invalid merge-base', 409)
+    if (previous) {
+      await touch(target, this.#now())
+      return { path: target, headSha: head, baseSha, reused: true }
+    }
+    // Do not execute checkout hooks while materializing PR-controlled content.
+    await this.#git(
+      ['-c', 'core.hooksPath=/dev/null', 'worktree', 'add', '--detach', target, head],
+      context.repoPath,
+    )
+    return { path: target, headSha: head, baseSha, reused: false }
   }
 
   async remove(prNumber: number): Promise<boolean> {

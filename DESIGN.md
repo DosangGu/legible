@@ -62,7 +62,7 @@ A consequence worth internalizing: **recall matters more than precision.** Since
 
 Next.js was ruled out not because Node is unavailable — Claude Code requires Node, so it is always present — but because **it would create a second request-handling layer** alongside the daemon.
 
-### Startup
+### Startup (CLI follow-up)
 
 ```
 legible              # start daemon if absent, register cwd repo, print URL
@@ -72,7 +72,13 @@ legible add <path>   # register a repo only
 
 Lock at `~/.local/state/legible/daemon.sock`. If alive, attach; otherwise spawn. **Must be idempotent.**
 
-Preflight on startup: presence and version of `git`, `gh`, `claude`, `codex`, plus auth status (`gh auth status` etc.). A failed check starts the daemon in **degraded mode** so the UI can show recovery guidance, but review-starting actions remain blocked. This surfaces an expired token before a review without making diagnostics depend on a successful preflight.
+In 9A the daemon is started through npm and prints an authenticated browser URL; CLI attach,
+automatic launch, and singleton management remain follow-up work.
+
+Preflight on startup checks presence, version, and authentication of `git`, `gh`, `claude`, and
+`codex`. Degraded status stays visible, but gating is operation-specific: registration needs Git,
+PR listing needs GitHub auth, PR preparation needs Git and GitHub auth, and AI turns need only the
+selected agent. An unused agent being absent must not block the other backend.
 
 ---
 
@@ -263,7 +269,10 @@ Both go stateful. Mixing `claude -p` with `app-server` forces the interface to c
 
 ### Assist agent: subordinate mode
 
-Run Codex via `codex mcp` (Codex itself as a stdio MCP server) and **attach it as a tool of the main agent.** For Claude Code, inject it inline through `--mcp-config`.
+**Deferred: excluded from the current implementation.** If implemented later, expose the existing
+stateful Codex adapter through a daemon-owned MCP tool for the main agent. The old Codex
+`mcp-server` command has been removed; `codex mcp` manages external connections and does not host
+Codex as a tool. Do not base new work on the previous direct-MCP design.
 
 The user configures nothing. The daemon injects everything at spawn time.
 
@@ -493,7 +502,7 @@ Because it is a local array, edits like "soften #3" or "merge #1 and #4" happen 
 
 ```
 /                        recent reviews + open repository
-/repos/:repoId           PR list
+/repos/:owner/:name      PR list
 /review/:sessionId       review screen
 ```
 
@@ -501,9 +510,25 @@ SPA router. The WebSocket must survive screen transitions so concurrent review s
 
 ### First run
 
-A single **Open repository** button → file browser starting at the home directory.
+A path input and **Open repository** button register an existing GitHub.com checkout. A folder
+picker is deferred. First-run and populated home screens share setup status, but only the latter
+shows saved repository links and recent reviews.
 
-The browse root is a config value defaulting to `$HOME`. Not exposed in the UI. Do not hardcode it — corporate NFS and `/mnt/...` mounts will come up.
+The path root is `LEGIBLE_BROWSE_ROOT`, defaulting to `$HOME`. It is not editable in the UI.
+Normalize with realpath, verify containment, find the Git top level, and verify containment again.
+Accept regular clones only. Reject linked worktrees, bare repositories, non-GitHub.com origins,
+and remote URLs with embedded credentials. The registry persists canonical paths and keeps its first
+primary checkout; revalidate origin and checkout identity before worktree operations.
+
+The PR page lists 30 open PRs per page and accepts a PR number directly. Agent selection defaults
+to Claude with shell/network off; switching to Codex defaults to broad commands within its read-only
+sandbox. Model and effort remain free-form. Preparing a session never starts an agent.
+
+Serialize session creation by repository/PR, and Git operations by common Git directory. Fetch into
+dedicated refs without changing FETCH_HEAD, verify the advertised head/base, and pin merge-base.
+Persist before publishing the new session. Reopening preserves the existing pinned review and updates
+its last-opened timestamp; submitted sessions open their receipt. Head refresh and repeat reviews are
+deferred. Multi-repository cleanup resolves and validates the session's exact registered worktree.
 
 From the second run onward, **recent items are the first screen.** Design the empty state and the everyday state separately.
 
@@ -511,7 +536,7 @@ Also on the first screen:
 - Preflight results (`gh` / `claude` / `codex` auth status)
 - A direct path input — users arriving over SSH prefer pasting to clicking
 
-### The browser is a repo picker
+### Future directory picker
 
 Do not build a general-purpose file browser. That turns the daemon into a remote file explorer, and one leaked token exposes the entire home directory instead of a review tool.
 
@@ -554,14 +579,17 @@ Stages:
 
 ## 11. Security
 
-- **Bind to `127.0.0.1` by default.** Exposure requires an explicit `--bind` plus a token.
+- **9A binds only to loopback.** Direct external binding is rejected; remote users use SSH forwarding.
 - The daemon holds both GitHub and agent credentials. The moment it listens on a network, anyone on it can post comments as the user and burn the user's agent quota.
-- Embedding a token in the URL `legible` prints keeps local friction at zero while providing a minimum remote defense.
+- A per-start bootstrap token is printed in the URL fragment, removed immediately by the SPA, and
+  exchanged for a separate HttpOnly/SameSite=Strict cookie. All user APIs and WebSocket upgrades
+  require authentication and local Host/Origin checks. Missing mutation/WS origins are rejected.
+  Agent MCP retains separate session-bound bearer auth. Never log tokens, cookies, or auth bodies.
 - Design the daemon API to be **network-transparent** (WebSocket + token). A Unix-socket-only design has to be torn out when one UI needs to attach to daemons on several machines.
 
 ### Over SSH
 
-The daemon is remote; the browser is local. Detect `SSH_CONNECTION` and print the forwarding command verbatim:
+The daemon is remote; the browser is local. Until CLI automation exists, forward manually:
 
 ```
 ssh -L 7777:localhost:7777 <host>
@@ -615,8 +643,9 @@ Riskiest first. **Follow the order.**
 | 8A | Local CLI authentication boundary | Delegate credentials and billing mode to the official CLIs |
 | 8B | Base executable-config projection | Restore safely after agent exit and daemon crashes |
 | 8C | Claude adapter + prompt/tool hardening | Stateful local CLI transport with deterministic read-only controls |
-| 8D | Subordinate mode | Attach Codex as an explicitly injected Claude MCP tool |
-| 9 | Shell | Browser, repo registration, PR list, recent items, token auth. Easiest and lowest risk |
+| 8D | Subordinate mode (deferred) | Explicitly excluded from the current implementation |
+| 9A | Web entry flow | Path registration, multi-repo PR preparation, agent selection, recent reviews, local browser auth |
+| 9B | Shell follow-up | CLI attach/start, singleton management, browser launch, directory picker; remote binding separately |
 
 **Step 3 will take twice as long as expected.** A diff viewer with inline widgets is universally underestimated until you build one. If it stalls, dropping side-by-side and shipping unified only is the escape hatch.
 
