@@ -1,3 +1,4 @@
+import { AgentBackendKind } from '@legible/protocol'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -252,7 +253,7 @@ class CodexSession implements AgentSession {
         active.queue.push({
           type: 'error',
           retryable,
-          category: 'codex',
+          category: AgentBackendKind.Codex,
           ...messageProperty(params.error),
         })
         return
@@ -398,7 +399,7 @@ async function handleServerRequest(request: AppServerRequest): Promise<unknown> 
 }
 
 function validateOptions(options: AgentStartOptions): void {
-  if (options.spec.backend !== 'codex') {
+  if (options.spec.backend !== AgentBackendKind.Codex) {
     throw new UnsupportedCodexOptionError('CodexBackend requires backend: codex')
   }
   if (options.spec.onOutOfScope === 'ask') {

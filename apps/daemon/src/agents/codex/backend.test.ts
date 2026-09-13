@@ -1,3 +1,4 @@
+import { AgentBackendKind } from '@legible/protocol'
 import { EventEmitter } from 'node:events'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -13,7 +14,7 @@ import { CodexBackend, CodexConfigurationError, UnsupportedCodexOptionError } fr
 
 const roots: string[] = []
 const baseSpec: AgentSpec = {
-  backend: 'codex',
+  backend: AgentBackendKind.Codex,
   model: 'future-model',
   effort: 'future-effort',
   shell: 'git',

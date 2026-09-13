@@ -1,6 +1,7 @@
-import type { PreflightReport } from '@legible/protocol'
+import { AgentBackendKind, type PreflightReport } from '@legible/protocol'
 
 import { CodexBackend } from './agents/codex/backend.js'
+import { ClaudeBackend } from './agents/claude/backend.js'
 import type { AppServerProcessFactory } from './agents/codex/app-server-client.js'
 import type { AgentBackend, McpServerProvider } from './agents/types.js'
 import { ChatService } from './chats/service.js'
@@ -24,9 +25,7 @@ import { SubmissionService } from './submissions/service.js'
 
 export type DaemonServices = {
   repoPath: string
-  agents: {
-    codex: AgentBackend
-  }
+  agents: Record<AgentBackendKind, AgentBackend>
   chats: ChatService
   comments: CommentService
   mcp: ReviewMcpServer
@@ -52,6 +51,7 @@ export type CreateServicesOptions = {
   onListenerError?: (error: unknown) => void
   codexProcessFactory?: AppServerProcessFactory
   codexBackend?: AgentBackend
+  claudeBackend?: AgentBackend
   githubClient?: GitHubClient
   mcpOrigin?: string
 }
@@ -89,6 +89,7 @@ export function createDaemonServices(options: CreateServicesOptions): DaemonServ
       ...(options.codexProcessFactory ? { processFactory: options.codexProcessFactory } : {}),
     })
   const mcpHolder: { server?: ReviewMcpServer } = {}
+  const claude = options.claudeBackend ?? new ClaudeBackend()
   const mcpProvider: McpServerProvider = {
     open(sessionId, origin) {
       if (!mcpHolder.server) throw new Error('Legible MCP server is not ready')
@@ -99,7 +100,8 @@ export function createDaemonServices(options: CreateServicesOptions): DaemonServ
     sessions,
     diffs,
     eventBus,
-    codex,
+    backends: { [AgentBackendKind.Codex]: codex, [AgentBackendKind.Claude]: claude },
+    configProjection,
     mcp: mcpProvider,
     ...(options.now ? { now: options.now } : {}),
   })
@@ -137,7 +139,7 @@ export function createDaemonServices(options: CreateServicesOptions): DaemonServ
 
   return {
     repoPath: options.repoPath,
-    agents: { codex },
+    agents: { [AgentBackendKind.Codex]: codex, [AgentBackendKind.Claude]: claude },
     chats,
     comments,
     mcp: reviewMcp,

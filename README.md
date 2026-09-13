@@ -1,7 +1,7 @@
 # Legible
 
 Legible is an AI-assisted GitHub pull request review tool built as a local daemon and a
-browser UI. The daemon skeleton is under active development; see [`DESIGN.md`](./DESIGN.md) for
+browser UI. The review workflow is under active development; see [`DESIGN.md`](./DESIGN.md) for
 the product and architecture specification.
 
 ## Development
@@ -32,7 +32,7 @@ The daemon binds to `127.0.0.1:7777`. Run it directly during daemon work:
 npm run dev --workspace @legible/daemon
 ```
 
-It currently provides health and preflight status, preflight refresh, an in-memory session list,
+It currently provides health and preflight status, preflight refresh, persisted review sessions,
 a normalized session diff, restricted whole-file content, and a read-only WebSocket event stream
 under `/api`. Session diffs are available from `GET /api/sessions/:sessionId/diff`; the web review
 screen uses `GET /api/sessions/:sessionId/file?path=...&side=RIGHT` for its whole-file toggle. That
@@ -42,7 +42,14 @@ the status API from starting.
 
 Open `/review/:sessionId` in the web app to view a unified, read-only CodeMirror diff. Changed-file
 navigation, left/right line anchors, whole-file context, loading, empty, binary, and API error states
-are available alongside inline drafts, review submission, and main/per-comment Codex chats.
+are available alongside inline drafts, review submission, and main/per-comment Codex or Claude chats.
+
+Claude uses the official Agent SDK with the locally installed, unmodified `claude` executable.
+Its initial scope is `shell: none`, `network: off | fetch`, and `onOutOfScope: deny`; subordinate
+agents are not enabled yet. Only read/search tools and Legible's review MCP tools are available.
+Hooks, executable skills, slash commands, and plugins are disabled for reviews. Incompatible
+managed customizations block startup. Base-branch executable configuration remains projected until
+the agent exits; restoration conflicts block reuse and cleanup without overwriting user edits.
 
 Legible delegates authentication to the locally installed agent CLIs. Sign in before starting the
 daemon:
@@ -53,7 +60,15 @@ codex login
 ```
 
 Preflight checks `claude auth status` and `codex login status`. Subscription or API billing is chosen
-inside each official CLI; Legible never reads or stores agent credentials.
+inside each official CLI; Legible never reads or stores agent credentials. Claude's chat reports
+the CLI's authentication category, not a guarantee of free or subscription-only usage. In particular,
+an inherited `ANTHROPIC_API_KEY` can select API billing even when a subscription is active.
+
+Run the optional local Claude startup/shutdown smoke test without a model prompt:
+
+```bash
+LEGIBLE_CLAUDE_INTEGRATION=1 npx vitest run apps/daemon/src/agents/claude/integration.test.ts
+```
 
 The daemon also owns the internal PR worktree lifecycle. It creates detached worktrees outside
 the checkout, reuses their pinned commits, refuses destructive cleanup of dirty or unknown paths,

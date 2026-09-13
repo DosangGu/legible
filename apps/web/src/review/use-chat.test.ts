@@ -1,3 +1,4 @@
+import { AgentBackendKind } from '@legible/protocol'
 import type { ChatSnapshot } from '@legible/protocol'
 import { describe, expect, it } from 'vitest'
 
@@ -9,7 +10,7 @@ describe('applyChatEvent', () => {
       sessionId: 'session-1',
       revision: 2,
       status: 'running',
-      backend: 'codex',
+      backend: AgentBackendKind.Codex,
       currentTurnId: 'turn-1',
       entries: [
         {
@@ -38,7 +39,7 @@ describe('applyChatEvent', () => {
       sessionId: 'session-1',
       revision: 2,
       status: 'idle',
-      backend: 'codex',
+      backend: AgentBackendKind.Codex,
       entries: [],
     }
 

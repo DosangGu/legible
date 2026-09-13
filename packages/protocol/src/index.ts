@@ -1,3 +1,5 @@
+export { AgentBackendKind } from './model.js'
+
 export type {
   AgentSpec,
   CreateDraftCommentRequest,

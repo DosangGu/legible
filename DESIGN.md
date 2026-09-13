@@ -107,12 +107,17 @@ type DraftComment = {
   startLine?: number      // multi-line
   startSide?: 'LEFT' | 'RIGHT'
   body: string
-  origin: 'claude' | 'codex' | 'human'
+  origin: AgentBackendKind | 'human'
   createdAt: string
 }
 
+enum AgentBackendKind {
+  Claude = 'claude',
+  Codex = 'codex',
+}
+
 type AgentSpec = {
-  backend: 'claude' | 'codex'
+  backend: AgentBackendKind
   model?: string          // free-form. Do not validate
   effort?: string         // backend-native value. Do not normalize
   shell: 'none' | 'git' | 'broad'
@@ -292,14 +297,14 @@ A single knob hides several rules. **Keep an explicit mapping table in the adapt
 
 | Knob | Claude Code | Codex |
 |---|---|---|
-| `shell: none` | `--allowedTools "Read,Glob,Grep"` | stable read-only sandbox + shell tool off |
-| `shell: git` | `+ Bash(git log *)`, `Bash(git blame *)`, `Bash(git show *)`, `Bash(git diff *)` | same as `broad` in the first adapter |
-| `shell: broad` | additional rules | shell tool on inside the read-only sandbox |
+| `shell: none` | `tools: Read,Glob,Grep` plus explicit MCP allowlist | stable read-only sandbox + shell tool off |
+| `shell: git` | deferred; rejected before startup | same as `broad` in the first adapter |
+| `shell: broad` | deferred; rejected before startup | shell tool on inside the read-only sandbox |
 | `network: off` | WebFetch/WebSearch not allowed | command network off + web search disabled |
 | `network: fetch` | `+ WebFetch,WebSearch` | command network off + live web search |
-| `network: free` | additional rules | command network on + live web search |
-| `onOutOfScope: deny` | deny mode | auto-reject approvals |
-| `onOutOfScope: ask` | surface approval in chat | deferred until approval UI exists |
+| `network: free` | deferred; rejected before startup | command network on + live web search |
+| `onOutOfScope: deny` | `dontAsk` and deny permission callbacks | auto-reject approvals |
+| `onOutOfScope: ask` | deferred; rejected before startup | deferred until approval UI exists |
 
 File writes are **pinned off.** Do not expose them as a knob.
 
@@ -314,7 +319,18 @@ plugin-provided MCP server through per-thread configuration. Preserve the real `
 authentication, but never write its configuration. Use ephemeral app-server threads so review
 sessions do not enter the user's Codex history.
 
-In `--allowedTools` prefix matching, **the space in `Bash(git log *)` matters.** `Bash(git log*)` would also match `git log-something`.
+Claude's `allowedTools` alone is not an allowlist: it pre-approves tools. Restrict built-ins with
+`tools`, explicitly disable write/shell/delegation tools, inject only Legible MCP with strict MCP
+configuration, and verify connected server tool sets. Disable hooks, executable skills, slash
+commands, plugins, and automatic memory writes while retaining CLI-owned authentication and
+repository guidance. Reject incompatible managed executable customizations before spawning.
+Skills may be read as text. These controls are a tool boundary, not a filesystem read sandbox;
+`network: off` disables research tools, not the CLI's model/authentication traffic.
+
+Step 8C uses a persistent SDK streaming-input query and the local `claude` executable. Acquire the
+base-config projection before startup and release only after process exit. Keep restoration conflicts
+visible and block reuse or cleanup. Authentication and projection notices apply to main and per-item
+chats. Step 8D subordinate mode remains deferred.
 
 ### Do not validate model or effort
 
@@ -561,11 +577,24 @@ An overlay network like Tailscale removes the problem entirely, but the tool mus
 
 - Run the CLI/SDK through supported paths. **Never read OAuth credentials from `~/.claude` and call `api.anthropic.com` directly.** That is the pattern that actually caused trouble.
 - On distribution, each user runs with their own credentials. Do not relay the developer's account.
-- If it becomes a business, switch to API keys under the Commercial Terms.
+- Distribution and commercial use must follow the current SDK license and Commercial Terms;
+  do not assume the SDK is MIT-licensed or that a paid subscription guarantees included usage.
 - Branding: the product must not look like Claude Code or any Anthropic product. Maintain its own identity.
 - This area changes often. Re-check the Usage Policy and Commercial Terms at the point of any distribution decision.
 
 **The larger practical risk is company policy, not terms of service.** Reviewing company code through a personal account is the real exposure, so keep auth profiles separate from the start.
+
+As checked on 2026-09-13, Anthropic's [Claude Code legal guidance](https://code.claude.com/docs/en/legal-and-compliance)
+describes embedding an unmodified CLI with end-user-owned authentication and direct billing, subject
+to its terms. Legible invokes the user's installed executable; it does not relay credentials or
+resell access. The [SDK license](https://github.com/anthropics/claude-agent-sdk-typescript/blob/main/LICENSE.md)
+is governed by Commercial Terms. Recheck both before distributing.
+
+The [SDK subscription notice](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan)
+currently says the announced SDK/headless billing separation is paused. This is not a pricing
+promise: inherited API keys can select API billing, provider credentials follow provider billing,
+and enabled usage credits can incur additional charges. Show only the CLI-reported authentication
+category, without email, organization identifiers, or tokens; never change the user's auth method.
 
 ---
 

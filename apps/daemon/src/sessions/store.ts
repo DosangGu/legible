@@ -1,3 +1,4 @@
+import { AgentBackendKind } from '@legible/protocol'
 import { randomUUID } from 'node:crypto'
 import { chmod, open, mkdir, readdir, readFile, rename, unlink } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -146,7 +147,9 @@ function isDraftComment(value: unknown): boolean {
     typeof value.line === 'number' &&
     (value.side === 'LEFT' || value.side === 'RIGHT') &&
     typeof value.body === 'string' &&
-    (value.origin === 'human' || value.origin === 'codex' || value.origin === 'claude') &&
+    (value.origin === 'human' ||
+      value.origin === AgentBackendKind.Codex ||
+      value.origin === AgentBackendKind.Claude) &&
     typeof value.createdAt === 'string'
   )
 }
@@ -154,7 +157,7 @@ function isDraftComment(value: unknown): boolean {
 function isAgentSpec(value: unknown): boolean {
   return (
     isRecord(value) &&
-    (value.backend === 'codex' || value.backend === 'claude') &&
+    (value.backend === AgentBackendKind.Codex || value.backend === AgentBackendKind.Claude) &&
     (value.shell === 'none' || value.shell === 'git' || value.shell === 'broad') &&
     (value.network === 'off' || value.network === 'fetch' || value.network === 'free') &&
     (value.onOutOfScope === 'deny' || value.onOutOfScope === 'ask')
@@ -168,7 +171,7 @@ function isPersistedChat(value: unknown): boolean {
     typeof snapshot.sessionId === 'string' &&
     typeof snapshot.revision === 'number' &&
     typeof snapshot.status === 'string' &&
-    snapshot.backend === 'codex' &&
+    (snapshot.backend === AgentBackendKind.Codex || snapshot.backend === AgentBackendKind.Claude) &&
     Array.isArray(snapshot.entries) &&
     snapshot.entries.every(
       (entry) => isRecord(entry) && typeof entry.id === 'string' && typeof entry.kind === 'string',

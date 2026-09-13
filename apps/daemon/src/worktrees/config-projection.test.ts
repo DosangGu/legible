@@ -83,6 +83,18 @@ describe('WorktreeConfigProjection', () => {
     expect(await readFile(join(fixture.repo, '.claude/settings.json'), 'utf8')).toContain('head')
   })
 
+  it('blocks reuse after a restoration conflict without overwriting user edits', async () => {
+    const fixture = await createFixture()
+    const service = new WorktreeConfigProjection({ stateDirectory: fixture.stateDirectory })
+    const lease = await service.acquire(review(fixture))
+    const path = join(fixture.repo, '.claude/settings.json')
+    await writeFile(path, '{"user":"edited"}\n')
+
+    await expect(lease.release()).rejects.toThrow()
+    await expect(service.acquire(review(fixture))).rejects.toThrow('could not be restored')
+    expect(await readFile(path, 'utf8')).toBe('{"user":"edited"}\n')
+  })
+
   it('does not create a manifest when protected config is unchanged', async () => {
     const fixture = await createFixture()
     await git(fixture.repo, 'reset', '--hard', fixture.baseSha)

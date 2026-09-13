@@ -83,7 +83,7 @@ describe('PreflightService', () => {
 
   it('reports agent-specific local CLI login guidance', async () => {
     const runner: CommandRunner = {
-      run: vi.fn(async (_command, args) =>
+      run: vi.fn<CommandRunner['run']>(async (_command, args) =>
         args.includes('status')
           ? { status: 'completed', exitCode: 1, stdout: 'private account', stderr: '' }
           : { status: 'completed', exitCode: 0, stdout: 'version 1', stderr: '' },

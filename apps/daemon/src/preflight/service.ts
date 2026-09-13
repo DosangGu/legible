@@ -1,4 +1,9 @@
-import type { PreflightCheck, PreflightReport, PreflightTool } from '@legible/protocol'
+import {
+  AgentBackendKind,
+  type PreflightCheck,
+  type PreflightReport,
+  type PreflightTool,
+} from '@legible/protocol'
 
 import type { CommandResult, CommandRunner } from './command-runner.js'
 
@@ -14,12 +19,12 @@ const tools: readonly ToolDefinition[] = [
   { tool: 'git', version: ['git', '--version'] },
   { tool: 'gh', version: ['gh', '--version'], auth: ['gh', 'auth', 'status'] },
   {
-    tool: 'claude',
+    tool: AgentBackendKind.Claude,
     version: ['claude', '--version'],
     auth: ['claude', 'auth', 'status'],
   },
   {
-    tool: 'codex',
+    tool: AgentBackendKind.Codex,
     version: ['codex', '--version'],
     auth: ['codex', 'login', 'status'],
   },
@@ -141,8 +146,8 @@ export class PreflightService {
 }
 
 function authenticationHint(tool: PreflightTool): string {
-  if (tool === 'claude') return 'Authentication required; run claude auth login'
-  if (tool === 'codex') return 'Authentication required; run codex login'
+  if (tool === AgentBackendKind.Claude) return 'Authentication required; run claude auth login'
+  if (tool === AgentBackendKind.Codex) return 'Authentication required; run codex login'
   return 'Authentication required'
 }
 

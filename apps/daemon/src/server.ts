@@ -24,6 +24,7 @@ export type StartDaemonOptions = {
   worktreeTtlMs?: number
   now?: () => Date
   codexBackend?: AgentBackend
+  claudeBackend?: AgentBackend
   githubClient?: GitHubClient
 }
 
@@ -43,6 +44,7 @@ export async function createDaemon(options: StartDaemonOptions): Promise<DaemonR
     ...(options.worktreeTtlMs !== undefined ? { worktreeTtlMs: options.worktreeTtlMs } : {}),
     ...(options.now ? { now: options.now } : {}),
     ...(options.codexBackend ? { codexBackend: options.codexBackend } : {}),
+    ...(options.claudeBackend ? { claudeBackend: options.claudeBackend } : {}),
     ...(options.githubClient ? { githubClient: options.githubClient } : {}),
     mcpOrigin: `http://127.0.0.1:${String(requestedPort)}`,
   })

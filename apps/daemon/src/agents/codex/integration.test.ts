@@ -1,3 +1,4 @@
+import { AgentBackendKind } from '@legible/protocol'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -17,7 +18,7 @@ describe.runIf(integrationEnabled)('Codex app-server integration', () => {
         systemPrompt: 'Review only.',
         mcpServers: [],
         spec: {
-          backend: 'codex',
+          backend: AgentBackendKind.Codex,
           shell: 'none',
           network: 'off',
           onOutOfScope: 'deny',

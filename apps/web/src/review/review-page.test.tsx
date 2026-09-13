@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { AgentBackendKind } from '@legible/protocol'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -63,6 +64,38 @@ describe('ReviewPage', () => {
     await user.click(screen.getByRole('button', { name: 'Whole file' }))
     await waitFor(() => expect(document.body.textContent).toContain('whole context'))
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes('side=RIGHT'))).toBe(true)
+  })
+
+  it('shows the Claude backend label and CLI authentication notice', async () => {
+    const chat: ChatSnapshot = {
+      ...emptyChat(),
+      backend: AgentBackendKind.Claude,
+      entries: [
+        {
+          id: 'notice-1',
+          turnId: 'turn-1',
+          createdAt: '2026-09-13T00:00:00Z',
+          kind: 'notice',
+          scope: 'session',
+          level: 'info',
+          retryable: false,
+          message: 'Claude CLI reports API key authentication.',
+        },
+      ],
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input)
+        if (url === '/api/sessions/session-1') return jsonResponse(webSession())
+        if (url.endsWith('/chat')) return jsonResponse(chat)
+        return jsonResponse(diffDocument())
+      }),
+    )
+
+    renderReview()
+    expect(await screen.findByText('Claude')).toBeTruthy()
+    expect(await screen.findByText('Claude CLI reports API key authentication.')).toBeTruthy()
   })
 
   it('shows a stable API error and retries', async () => {
@@ -412,7 +445,7 @@ function emptyChat(): ChatSnapshot {
     sessionId: 'session-1',
     revision: 0,
     status: 'idle' as const,
-    backend: 'codex' as const,
+    backend: AgentBackendKind.Codex as const,
     entries: [],
   }
 }
@@ -427,7 +460,7 @@ function webSession(overrides: Partial<ReviewSession> = {}): ReviewSession {
     worktreePath: '/state/worktrees/owner/repo/pr-42',
     config: {
       main: {
-        backend: 'codex',
+        backend: AgentBackendKind.Codex,
         shell: 'git',
         network: 'fetch',
         onOutOfScope: 'deny',

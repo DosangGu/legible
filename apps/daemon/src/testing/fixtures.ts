@@ -1,3 +1,4 @@
+import { AgentBackendKind } from '@legible/protocol'
 import type { ReviewSession } from '@legible/protocol'
 
 import type { CommandResult, CommandRunner } from '../preflight/command-runner.js'
@@ -12,7 +13,7 @@ export function reviewSession(overrides: Partial<ReviewSession> = {}): ReviewSes
     worktreePath: '/state/worktrees/owner/repo/pr-42',
     config: {
       main: {
-        backend: 'claude',
+        backend: AgentBackendKind.Claude,
         shell: 'git',
         network: 'fetch',
         onOutOfScope: 'deny',

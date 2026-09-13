@@ -10,6 +10,7 @@ export type AgentUsage = {
 
 export type AgentEvent =
   | { type: 'session_started'; id: string; model: string }
+  | { type: 'notice'; message: string }
   | { type: 'assistant_delta'; text: string }
   | { type: 'tool_call'; callId: string; name: string; input: unknown }
   | {
@@ -47,7 +48,7 @@ export type McpServerLease = {
 }
 
 export interface McpServerProvider {
-  open(sessionId: string, origin: 'codex'): McpServerLease
+  open(sessionId: string, origin: AgentSpec['backend']): McpServerLease
 }
 
 export type AgentStartOptions = {

@@ -1,3 +1,8 @@
+export enum AgentBackendKind {
+  Claude = 'claude',
+  Codex = 'codex',
+}
+
 export type Repo = {
   id: string
   owner: string
@@ -62,7 +67,7 @@ export type DraftComment = {
   startLine?: number
   startSide?: 'LEFT' | 'RIGHT'
   body: string
-  origin: 'claude' | 'codex' | 'human'
+  origin: AgentBackendKind | 'human'
   createdAt: string
 }
 
@@ -80,7 +85,7 @@ export type UpdateDraftCommentRequest = {
 }
 
 export type AgentSpec = {
-  backend: 'claude' | 'codex'
+  backend: AgentBackendKind
   model?: string
   effort?: string
   shell: 'none' | 'git' | 'broad'

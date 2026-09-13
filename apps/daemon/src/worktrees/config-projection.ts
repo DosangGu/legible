@@ -106,6 +106,11 @@ export class WorktreeConfigProjection {
       const worktreePath = resolve(session.worktreePath)
       const active = this.#active.get(worktreePath)
       if (active) {
+        if (active.leases === 0) {
+          throw new ConfigProjectionError(
+            'A previous config projection could not be restored; restart after resolving the conflict',
+          )
+        }
         if (!sameProjection(active.manifest, session)) {
           throw new ConfigProjectionError('A different config projection is already active')
         }

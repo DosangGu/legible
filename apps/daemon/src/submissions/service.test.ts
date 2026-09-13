@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { ReviewSession } from '@legible/protocol'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { GitHubClient, CreateGitHubReview } from '../github/client.js'
 import { GitHubClientError } from '../github/client.js'
@@ -70,6 +70,35 @@ describe('SubmissionService', () => {
       githubReviewId: 91,
       cleanup: { status: 'complete' },
     })
+  })
+
+  it('retains a successful receipt when agent cleanup fails and never deletes the worktree', async () => {
+    const remove = vi.fn(async () => true)
+    const createReview = vi.fn(async (input: CreateGitHubReview) => ({
+      id: 91,
+      htmlUrl: 'https://example.test/review/91',
+      body: input.body,
+      submittedAt: '',
+    }))
+    const { service, services } = await setup(
+      {
+        getPullHead: async () => 'b'.repeat(40),
+        createReview,
+        listReviews: async () => [],
+      },
+      remove,
+    )
+    vi.spyOn(services.chats, 'seal').mockRejectedValue(new Error('Config restoration conflict'))
+
+    const result = await service.submit('session-1', { event: 'COMMENT', body: 'Summary' })
+
+    expect(result.submission).toMatchObject({
+      status: 'submitted',
+      githubReviewId: 91,
+      cleanup: { status: 'failed' },
+    })
+    expect(createReview).toHaveBeenCalledOnce()
+    expect(remove).not.toHaveBeenCalled()
   })
 
   it('warns on a changed head and submits only after explicit override', async () => {

@@ -1,3 +1,5 @@
+import type { AgentBackendKind } from './model.js'
+
 export type ChatStatus = 'unavailable' | 'idle' | 'starting' | 'running' | 'interrupting' | 'failed'
 
 export type ChatUsage = {
@@ -32,6 +34,7 @@ export type ChatToolEntry = ChatEntryBase & {
 
 export type ChatNoticeEntry = ChatEntryBase & {
   kind: 'notice'
+  scope?: 'session'
   level: 'info' | 'error'
   message: string
   retryable: boolean
@@ -43,7 +46,7 @@ export type ChatSnapshot = {
   sessionId: string
   revision: number
   status: ChatStatus
-  backend: 'codex'
+  backend: AgentBackendKind
   model?: string
   unavailableReason?: string
   currentTurnId?: string

@@ -1,3 +1,4 @@
+import { AgentBackendKind } from '@legible/protocol'
 import { randomBytes } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
@@ -62,7 +63,7 @@ export class ReviewMcpServer implements McpServerProvider {
     this.#origin = normalizeOrigin(origin)
   }
 
-  open(sessionId: string, origin: 'codex'): McpServerLease {
+  open(sessionId: string, origin: AgentBackendKind): McpServerLease {
     if (!this.options.sessions.get(sessionId)) throw new Error('Review session not found')
     const token = this.#tokenFactory()
     const handler = createMcpHandler(() => this.#createToolServer(sessionId, origin))
@@ -124,7 +125,7 @@ export class ReviewMcpServer implements McpServerProvider {
     await Promise.allSettled(handlers.map((handler) => handler.close()))
   }
 
-  #createToolServer(sessionId: string, origin: 'codex'): McpServer {
+  #createToolServer(sessionId: string, origin: AgentBackendKind): McpServer {
     const server = new McpServer({ name: legibleMcpServerName, version: '0.0.0' })
     const anchorSchema = {
       path: z.string().min(1),

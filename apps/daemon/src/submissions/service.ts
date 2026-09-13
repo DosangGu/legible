@@ -158,13 +158,13 @@ export class SubmissionService {
       },
     }
     await this.#replace(pending)
-    await this.chats.seal(session.id)
     return this.#cleanup(pending)
   }
 
   async #cleanup(session: ReviewSession): Promise<ReviewSession> {
     let cleanup: Extract<ReviewSubmission, { status: 'submitted' }>['cleanup']
     try {
+      await this.chats.seal(session.id)
       await this.worktrees.remove(session.prNumber)
       cleanup = { status: 'complete' }
     } catch (error) {

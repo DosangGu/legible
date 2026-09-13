@@ -1,3 +1,4 @@
+import { AgentBackendKind } from '@legible/protocol'
 import type { ChatEntry, DiffSide } from '@legible/protocol'
 import { useState, type FormEvent } from 'react'
 
@@ -38,10 +39,15 @@ export function ChatPanel({
     message: string
   }>()
   const snapshot = chat.snapshot
+  const backendLabel = snapshot?.backend === AgentBackendKind.Claude ? 'Claude' : 'Codex'
   const busy = snapshot ? ['starting', 'running', 'interrupting'].includes(snapshot.status) : false
   const busyHere = busy && snapshot?.currentItemId === selectedItemId
   const retryHere = snapshot?.status === 'failed' && snapshot.retryItemId === selectedItemId
-  const entries = snapshot?.entries.filter((entry) => entry.itemId === selectedItemId) ?? []
+  const entries =
+    snapshot?.entries.filter(
+      (entry) =>
+        entry.itemId === selectedItemId || (entry.kind === 'notice' && entry.scope === 'session'),
+    ) ?? []
   const deleted = selectedItemId !== undefined && item?.deleted !== false
   const commandError =
     commandFailure && commandFailure.itemId === selectedItemId ? commandFailure.message : undefined
@@ -88,7 +94,7 @@ export function ChatPanel({
                 ? item && !item.deleted
                   ? `Comment #${String(item.number)}`
                   : 'Deleted comment'
-                : 'Codex'}
+                : backendLabel}
             </strong>
             <span>
               {item
@@ -132,7 +138,7 @@ export function ChatPanel({
               snapshot.entries.length === 0 &&
               snapshot.status !== 'unavailable' && (
                 <div className="chat-start">
-                  <p>Ask Codex to review the pinned diff and investigate related code.</p>
+                  <p>Ask {backendLabel} to review the pinned diff and investigate related code.</p>
                   <button
                     className="primary-button"
                     type="button"

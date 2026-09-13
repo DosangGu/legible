@@ -1,3 +1,4 @@
+import { AgentBackendKind } from '@legible/protocol'
 import type { AgentSpec, ChatSnapshot } from '@legible/protocol'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -19,10 +20,11 @@ import {
   ChatService,
   ChatUnavailableError,
   InvalidChatMessageError,
+  type ChatServiceOptions,
 } from './service.js'
 
 const codexSpec: AgentSpec = {
-  backend: 'codex',
+  backend: AgentBackendKind.Codex,
   shell: 'git',
   network: 'fetch',
   onOutOfScope: 'deny',
@@ -233,7 +235,7 @@ describe('ChatService', () => {
         sessionId: 'session-1',
         revision: 3,
         status: 'running',
-        backend: 'codex',
+        backend: AgentBackendKind.Codex,
         currentTurnId: 'old-turn',
         entries: [
           {
@@ -304,9 +306,174 @@ describe('ChatService', () => {
     await chats.close()
     expect(closed[1]).toHaveBeenCalledOnce()
   })
+  it('uses Claude for main and per-item turns and retains projection until the agent exits', async () => {
+    const order: string[] = []
+    const backend = scriptedBackend(() => [
+      { type: 'notice', message: 'Authentication method reported by CLI' },
+      { type: 'turn_completed' },
+    ])
+    backend.close.mockImplementation(async () => {
+      order.push('agent closed')
+    })
+    const release = vi.fn(async () => {
+      order.push('projection released')
+    })
+    const acquire = vi.fn(async () => {
+      order.push('projection acquired')
+      return { changes: [{ path: '.mcp.json' as const, action: 'removed' as const }], release }
+    })
+    const mcp: McpServerProvider = {
+      open: vi.fn(() => ({
+        spec: { name: 'legible_review', transport: 'http' as const, url: 'http://localhost/mcp' },
+        close: async () => {
+          order.push('mcp closed')
+        },
+      })),
+    }
+    const { chats, sessions } = setup(backend, false, mcp, {
+      backends: { [AgentBackendKind.Claude]: backend },
+      configProjection: { acquire },
+    })
+    sessions.add(
+      reviewSession({
+        baseSha: 'a'.repeat(40),
+        headSha: 'b'.repeat(40),
+        config: { main: { ...codexSpec, backend: AgentBackendKind.Claude, shell: 'none' } },
+        comments: [
+          {
+            id: 'comment-1',
+            path: 'a.ts',
+            line: 2,
+            side: 'RIGHT',
+            body: 'Explain this',
+            origin: 'human',
+            createdAt: '2026-09-13T00:00:00Z',
+          },
+        ],
+      }),
+    )
+    chats.startReview('session-1')
+    await waitForSnapshot(chats, (value) => value.status === 'idle')
+    chats.send('session-1', 'Soften this', 'comment-1')
+    const snapshot = await waitForSnapshot(chats, (value) => value.status === 'idle')
+    expect(snapshot.backend).toBe(AgentBackendKind.Claude)
+    expect(snapshot.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'notice',
+          message: expect.stringContaining('Base agent configuration'),
+        }),
+      ]),
+    )
+    expect(backend.inputs[1]).toContain('[comment #1: a.ts:2 RIGHT]')
+    expect(mcp.open).toHaveBeenCalledWith('session-1', AgentBackendKind.Claude)
+    expect(acquire).toHaveBeenCalledOnce()
+    expect(release).not.toHaveBeenCalled()
+    await chats.seal('session-1')
+    expect(order).toEqual([
+      'projection acquired',
+      'agent closed',
+      'projection released',
+      'mcp closed',
+    ])
+    await chats.close()
+  })
+
+  it('releases a projection after startup failure and reacquires it on retry', async () => {
+    const backend = scriptedBackend(() => [{ type: 'turn_completed' }])
+    backend.start.mockRejectedValueOnce(new Error('Claude startup failed'))
+    const release = vi.fn(async () => undefined)
+    const acquire = vi.fn(async () => ({ changes: [], release }))
+    const { chats, sessions } = setup(backend, false, undefined, {
+      backends: { [AgentBackendKind.Claude]: backend },
+      configProjection: { acquire },
+    })
+    sessions.add(
+      reviewSession({
+        config: { main: { ...codexSpec, backend: AgentBackendKind.Claude, shell: 'none' } },
+      }),
+    )
+    chats.send('session-1', 'Review')
+    await waitForSnapshot(chats, (value) => value.status === 'failed')
+    expect(release).toHaveBeenCalledOnce()
+    chats.retry('session-1')
+    await waitForSnapshot(chats, (value) => value.status === 'idle')
+    expect(acquire).toHaveBeenCalledTimes(2)
+    await chats.close()
+  })
+
+  it('blocks reuse and sealing after restoration fails without discarding the error', async () => {
+    const backend = scriptedBackend(() => {
+      throw new Error('Lost transport')
+    })
+    const release = vi.fn(async () => {
+      throw new Error('Protected config changed')
+    })
+    const { chats, sessions } = setup(backend, false, undefined, {
+      backends: { [AgentBackendKind.Claude]: backend },
+      configProjection: { acquire: async () => ({ changes: [], release }) },
+    })
+    sessions.add(
+      reviewSession({
+        config: { main: { ...codexSpec, backend: AgentBackendKind.Claude, shell: 'none' } },
+      }),
+    )
+    chats.send('session-1', 'Review')
+    const snapshot = await waitForSnapshot(chats, (value) => value.status === 'failed')
+    expect(snapshot.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ message: expect.stringContaining('Protected config changed') }),
+      ]),
+    )
+    expect(() => chats.retry('session-1')).toThrow('cleanup requires recovery')
+    await expect(chats.seal('session-1')).rejects.toThrow('cleanup requires recovery')
+    expect(backend.start).toHaveBeenCalledOnce()
+    await chats.close()
+  })
+
+  it('waits for startup during shutdown before restoring the worktree', async () => {
+    let started!: (session: AgentSession) => void
+    const backend = scriptedBackend(() => [])
+    backend.start.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          started = resolve
+        }),
+    )
+    const release = vi.fn(async () => undefined)
+    const { chats, sessions } = setup(backend, false, undefined, {
+      backends: { [AgentBackendKind.Claude]: backend },
+      configProjection: { acquire: async () => ({ changes: [], release }) },
+    })
+    sessions.add(
+      reviewSession({
+        config: { main: { ...codexSpec, backend: AgentBackendKind.Claude, shell: 'none' } },
+      }),
+    )
+    chats.send('session-1', 'Review')
+    await vi.waitFor(() => expect(backend.start).toHaveBeenCalledOnce())
+    const closing = chats.close()
+    expect(release).not.toHaveBeenCalled()
+    const close = vi.fn(async () => undefined)
+    started({
+      send: () => {
+        throw new Error('must not send after shutdown')
+      },
+      interrupt: async () => undefined,
+      close,
+    })
+    await closing
+    expect(close).toHaveBeenCalledOnce()
+    expect(release).toHaveBeenCalledOnce()
+  })
 })
 
-function setup(backend: AgentBackend, addSession = true, mcp?: McpServerProvider) {
+function setup(
+  backend: AgentBackend,
+  addSession = true,
+  mcp?: McpServerProvider,
+  overrides: Partial<ChatServiceOptions> = {},
+) {
   const eventBus = new EventBus()
   const sessions = new SessionRegistry(eventBus)
   if (addSession) {
@@ -323,13 +490,14 @@ function setup(backend: AgentBackend, addSession = true, mcp?: McpServerProvider
     sessions,
     diffs,
     eventBus,
-    codex: backend,
+    backends: { codex: backend },
     ...(mcp ? { mcp } : {}),
     now: () => new Date('2026-08-22T00:00:00.000Z'),
     idFactory: (() => {
       let id = 0
       return () => `id-${String(++id)}`
     })(),
+    ...overrides,
   })
   return { chats, sessions, eventBus }
 }

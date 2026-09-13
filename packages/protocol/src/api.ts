@@ -1,8 +1,8 @@
-import type { ReviewSession } from './model.js'
+import type { AgentBackendKind, ReviewSession } from './model.js'
 import type { ChatEventPayload } from './chat.js'
 import type { DiffSide } from './diff.js'
 
-export type PreflightTool = 'git' | 'gh' | 'claude' | 'codex'
+export type PreflightTool = 'git' | 'gh' | AgentBackendKind
 
 export type PreflightStatus = 'ready' | 'missing' | 'unauthenticated' | 'error'
 
