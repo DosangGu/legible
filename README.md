@@ -26,14 +26,37 @@ The repository is an npm workspace with separate browser, daemon, and shared-cod
 
 ## Open a review
 
-For the built application:
+For the built application, start or attach through the CLI:
 
 ```bash
 npm run build
-npm start --workspace @legible/daemon
+npm run legible
+# Or open a PR from the current checkout:
+npm run legible -- pr 123
 ```
 
-Open the connection URL printed by the daemon. On the home screen, paste an absolute path to a
+The daemon workspace exposes a `legible` bin; the root npm script runs it without a global install.
+If you want the bare command on your PATH, build first and explicitly link the daemon workspace
+with npm; Legible does not install a global command automatically.
+The CLI starts one background daemon if needed, then exits. In a supported checkout it registers the
+current repository; outside a checkout it warns and still opens the home screen. Local interactive
+runs open the browser automatically; SSH, CI, and non-interactive runs only print the URL. Override
+this with `--open` or `--no-open`. Browser-launch failure is non-fatal; open the printed URL manually.
+Linux uses `xdg-open`, macOS uses `open`, and WSL uses `wslview` when installed. Native Windows is
+not supported; run inside WSL. Do not pass connection URLs to diagnostic logs or issue reports.
+
+```bash
+npm run legible -- add ../another-checkout  # register only; paths may be relative
+npm run legible -- status                  # never starts a daemon or prints a token
+npm run legible -- stop                    # stop only when no work is active
+```
+
+`legible pr 123` reopens a saved review (or its submission receipt) directly. For a new PR it fills
+the web PR-number field so you can choose agent settings before creating the review. CLI entry never
+creates a new review automatically, starts an agent, or submits to GitHub. `add` and `pr` require a
+supported checkout; they fail instead of falling back to the home screen.
+
+On the home screen, paste an absolute path to a
 local GitHub.com checkout, choose a PR (or enter its number), and select Claude or Codex. Advanced
 settings expose model, effort, and supported read-only tool policies. Opening a PR prepares and
 saves its pinned diff; **only Start review calls the agent**. Reopening a PR keeps its original
@@ -49,6 +72,12 @@ For development with Vite hot reload:
 LEGIBLE_WEB_ORIGIN=http://127.0.0.1:5173 npm run dev
 ```
 
+Stop a background daemon before starting this foreground watch command. Both paths use the same
+ownership checks; the development daemon will not replace an already running instance. To run the
+built daemon in the foreground instead, use `npm start --workspace @legible/daemon` and Ctrl+C to stop.
+After startup you can use the CLI to attach to either foreground or background instances. A running
+daemon keeps its original environment, browse root, and web origin until you explicitly restart it.
+
 Vite proxies both HTTP and WebSocket traffic. Its port is fixed at 5173; the daemon serves on 7777.
 For SSH, forward port 7777 (`ssh -L 7777:127.0.0.1:7777 <host>`) and open the daemon's connection URL
 in your local browser. Use the same hostname consistently; `localhost` and `127.0.0.1` have different
@@ -63,7 +92,39 @@ If it moves or disappears, restore that checkout; Legible will not silently swit
 The registry and sessions are saved under `$XDG_STATE_HOME/legible`, falling back to
 `~/.local/state/legible`. Existing session files remain readable; register their matching checkout
 before requesting worktree cleanup. PR refresh/new review of an already reviewed PR, the folder
-picker, subordinate agents, and the eventual `legible` CLI are not implemented yet.
+picker, subordinate agents, automatic SSH tunnels, and OS service/autostart installation are not
+implemented yet. No package is published by this implementation.
+
+## Daemon lifecycle
+
+The daemon must own both port 7777 and the private `daemon.sock` in its state directory **before**
+restoring sessions, recovering projected configuration, or sweeping worktrees. Concurrent commands
+attach to the same instance. Startup and shutdown reject ordinary HTTP/WebSocket traffic with 503.
+There is no random-port fallback and no automatic restart for an incompatible daemon version.
+If another program owns the port, Legible reports the conflict without stopping that program.
+
+`legible stop` refuses while a mutation, Git operation, or agent turn is active. Wait for the work to
+finish (or interrupt the turn in the web UI) and retry. An idle stop closes agent processes, restores
+projected configuration, and persists conversations before releasing ownership. Errors during cleanup
+or persistence make stop fail visibly; inspect the log before restarting. SIGINT/SIGTERM use the same
+cleanup path and preserve interrupted turns for retry. Neither stop nor attach deletes saved reviews.
+
+Background diagnostics append to `daemon.log` in the state directory (mode 0600). The directory is
+private (0700), and the control socket is 0600. Bootstrap tokens stay in memory and travel only over
+the private control connection and the printed browser URL, never through the log or a credentials
+file. Existing unsafe socket paths or log symlinks are rejected. A stale socket left by a crash is
+reclaimed only after acquiring the HTTP port and verifying that no live control server owns it.
+
+CLI startup and stop wait up to 30 seconds. A timeout does not kill a process: inspect `legible status`
+and `daemon.log` before retrying. Keep the state path short enough for a Unix socket (the full
+`daemon.sock` path must fit in 103 UTF-8 bytes). State files and the browser authentication contract
+remain compatible with the previous release.
+
+`npm run check` runs unit/process tests, builds the application, then runs `npm run test:cli` against
+the built executable with temporary repositories and fake vendor probes. The final smoke test needs
+port 7777; it skips without touching the listener if that port is already occupied. Ordinary process
+tests use ephemeral ports. CI runs both Linux and macOS; WSL opener selection is unit-tested, but
+launching a Windows browser still requires a WSL environment for manual verification.
 
 ## Browser access and daemon API
 

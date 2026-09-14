@@ -62,18 +62,46 @@ A consequence worth internalizing: **recall matters more than precision.** Since
 
 Next.js was ruled out not because Node is unavailable — Claude Code requires Node, so it is always present — but because **it would create a second request-handling layer** alongside the daemon.
 
-### Startup (CLI follow-up)
+### Startup and CLI lifecycle
 
 ```
-legible              # start daemon if absent, register cwd repo, print URL
-legible pr 123       # deep-link straight into a review
-legible add <path>   # register a repo only
+legible              # start/attach, register a supported cwd repo, open home
+legible pr 123       # reopen a review, or prefill the web PR selector
+legible add <path>   # register a repo only; relative paths use caller cwd
+legible status       # inspect without starting a daemon or exposing a token
+legible stop         # stop an idle daemon; refuse while work is active
 ```
 
-Lock at `~/.local/state/legible/daemon.sock`. If alive, attach; otherwise spawn. **Must be idempotent.**
+The CLI starts a detached background daemon if absent; otherwise it attaches. **Must be idempotent.**
+Production startup claims the loopback HTTP listener (127.0.0.1:7777) and private Unix control socket
+at `$XDG_STATE_HOME/legible/daemon.sock` (fallback `~/.local/state/legible/daemon.sock`) before any
+session/configuration recovery or worktree sweep. The port is the atomic startup guard; only its
+owner may reclaim a verified stale socket. A live control socket also prevents a second port from
+opening the same state directory. Never remove regular files, symlinks, or another user's socket.
+All ordinary HTTP and WebSocket traffic is gated until ready and again during shutdown.
 
-In 9A the daemon is started through npm and prints an authenticated browser URL; CLI attach,
-automatic launch, and singleton management remain follow-up work.
+The versioned, bounded Unix control protocol supports only status, connect, and stop. Status is
+secret-free; connect hands the current bootstrap token to the same-user CLI without persisting it.
+Instance IDs prevent commands targeting an outdated daemon. CLI repository and session operations
+use the existing authenticated HTTP API, not a second implementation of domain logic. Preserve the
+separate MCP credential boundary. The state directory and socket are private (0700/0600).
+
+Local interactive CLI runs open the browser; SSH/CI/non-interactive runs print the URL only.
+`--open` and `--no-open` override the default. Browser-open failure is non-fatal. New PR links only
+prefill the web selector: settings and new-session creation stay in the UI. Existing reviews retain
+their pinned commits/settings and reopen their review or receipt. Opening never starts an agent.
+Plain `legible` outside a supported checkout warns but still opens home; `add` and `pr` fail.
+
+Stop atomically gates new mutations and refuses active mutation requests, Git operations, or agent
+turns. On an idle stop, finish agent shutdown/configuration restoration and persist chat snapshots
+before releasing the listener. Shutdown errors must reach the CLI after resources are closed.
+SIGINT/SIGTERM share this cleanup path; interrupted turns retain their recovery requests. Never kill
+by a saved PID or automatically restart a version mismatch. Startup/stop CLI waits are bounded at
+30 seconds, without forced termination on timeout. Background logs are private and contain no
+bootstrap URLs or tokens. Foreground npm/watch entry points use the same ownership rules.
+
+9B supports Linux, macOS, and WSL. Native Windows, npm publishing, service/autostart installation,
+automatic SSH tunnels, folder picking, and non-loopback binding remain follow-up work.
 
 Preflight on startup checks presence, version, and authentication of `git`, `gh`, `claude`, and
 `codex`. Degraded status stays visible, but gating is operation-specific: registration needs Git,
@@ -589,7 +617,8 @@ Stages:
 
 ### Over SSH
 
-The daemon is remote; the browser is local. Until CLI automation exists, forward manually:
+The daemon is remote; the browser is local. The CLI suppresses automatic browser launch over SSH;
+forward manually and open the printed URL locally:
 
 ```
 ssh -L 7777:localhost:7777 <host>
@@ -645,7 +674,8 @@ Riskiest first. **Follow the order.**
 | 8C | Claude adapter + prompt/tool hardening | Stateful local CLI transport with deterministic read-only controls |
 | 8D | Subordinate mode (deferred) | Explicitly excluded from the current implementation |
 | 9A | Web entry flow | Path registration, multi-repo PR preparation, agent selection, recent reviews, local browser auth |
-| 9B | Shell follow-up | CLI attach/start, singleton management, browser launch, directory picker; remote binding separately |
+| 9B | CLI lifecycle | Background attach/start, singleton ownership, browser handoff, status/idle stop; Unix/WSL |
+| Later | Entry and review follow-ups | Directory picker, PR refresh/re-review, native Windows, packaging, remote binding separately |
 
 **Step 3 will take twice as long as expected.** A diff viewer with inline widgets is universally underestimated until you build one. If it stalls, dropping side-by-side and shipping unified only is the escape hatch.
 

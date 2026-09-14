@@ -56,6 +56,30 @@ function renderEntry(path = '/') {
 }
 
 describe('Review entry screens', () => {
+  it('prefills a CLI PR link without automatically preparing a review', async () => {
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      json({ page: 1, items: [], hasNextPage: false }),
+    )
+    vi.stubGlobal('fetch', fetcher)
+    renderEntry('/repos/owner/repo?pr=42')
+    expect((screen.getByLabelText('Pull request number') as HTMLInputElement).value).toBe('42')
+    await screen.findByText('No open pull requests')
+    expect(fetcher.mock.calls.every((call) => !call[1]?.method)).toBe(true)
+    expect(screen.getByRole('button', { name: 'Open review' })).toBeTruthy()
+  })
+
+  it.each(['0', '-1', '1e3', '9007199254740992', 'bad'])(
+    'ignores invalid CLI PR query %s',
+    (pr) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => json({ page: 1, items: [], hasNextPage: false })),
+      )
+      renderEntry(`/repos/owner/repo?pr=${pr}`)
+      expect((screen.getByLabelText('Pull request number') as HTMLInputElement).value).toBe('')
+    },
+  )
+
   it('registers a path, selects PR and advanced settings, and opens without starting an agent', async () => {
     const calls: Array<{ url: string; body: unknown }> = []
     vi.stubGlobal(

@@ -2,6 +2,7 @@ import websocket from '@fastify/websocket'
 import Fastify, { type FastifyInstance } from 'fastify'
 import { BrowserAccess } from './access.js'
 import { installWeb } from './static.js'
+import type { DaemonLifecycle } from '../lifecycle/state.js'
 import { ServiceError } from '../common/service-error.js'
 import { GitHubClientError } from '../github/client.js'
 import {
@@ -52,6 +53,8 @@ export type BuildAppOptions = {
   startedAtMs?: number
   access: BrowserAccess
   webDirectory?: string
+  lifecycle?: DaemonLifecycle
+  shutdown?: () => Promise<void>
 }
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
@@ -71,6 +74,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     bodyLimit: 128 * 1024,
   })
 
+  options.lifecycle?.install(app)
   options.access.install(app)
   if (options.webDirectory) installWeb(app, options.webDirectory)
 
@@ -352,15 +356,25 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     socket.once('error', unsubscribe)
   })
 
+  let shutdownError: unknown
   app.addHook('onClose', async () => {
+    if (shutdownError) throw shutdownError
+  })
+  app.addHook('preClose', async () => {
     try {
-      await options.services.persistence.close()
-    } finally {
+      if (options.shutdown) return await options.shutdown()
       try {
         await options.services.chats.close()
       } finally {
-        await options.services.mcp.close()
+        try {
+          await options.services.persistence.close()
+        } finally {
+          await options.services.mcp.close()
+        }
       }
+    } catch (error) {
+      // Fastify does not propagate preClose hook errors. Report after resources close.
+      shutdownError = error
     }
   })
 

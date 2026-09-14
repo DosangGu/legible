@@ -12,13 +12,15 @@
   },
   "packageManager": "npm@11.19.0",
   "scripts": {
+    "legible": "node apps/daemon/dist/cli.js",
     "dev": "concurrently --kill-others-on-fail --names protocol,daemon,web --prefix-colors blue,magenta,green \"npm run dev --workspace @legible/protocol\" \"npm run dev --workspace @legible/daemon\" \"npm run dev --workspace @legible/web\"",
     "build": "npm run build --workspace @legible/protocol && npm run build --workspace @legible/daemon && npm run build --workspace @legible/web",
     "test": "vitest run --passWithNoTests",
+    "test:cli": "LEGIBLE_BUILT_CLI_TEST=1 vitest run apps/daemon/src/cli/built.test.ts",
     "lint": "eslint . --max-warnings 0",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check": "npm run format:check && npm run lint && npm test && npm run build"
+    "check": "npm run format:check && npm run lint && npm test && npm run build && npm run test:cli"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

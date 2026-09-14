@@ -78,6 +78,7 @@ export type ChatServiceOptions = {
 }
 
 export class ChatService {
+  #closed = false
   readonly #states = new Map<string, ChatState>()
   readonly #now: () => Date
   readonly #idFactory: () => string
@@ -225,10 +226,16 @@ export class ChatService {
   }
 
   async close(): Promise<void> {
+    this.#closed = true
     this.#unsubscribe()
     const states = [...this.#states.values()]
-    this.#states.clear()
-    await Promise.allSettled(states.map((state) => this.#closeAgent(state)))
+    // Keep snapshots (including interrupted requests) until final persistence finishes.
+    const results = await Promise.allSettled(states.map((state) => this.#closeAgent(state)))
+    const errors = results
+      .filter((result) => result.status === 'rejected')
+      .map((result) => result.reason)
+    if (errors.length)
+      throw new AggregateError(errors, 'Some agents require configuration recovery')
   }
 
   #begin(
@@ -237,6 +244,7 @@ export class ChatService {
     request: PersistedChatRequest,
     displayMessage?: string,
   ): ChatCommandAccepted {
+    if (this.#closed) throw new ChatUnavailableError('Legible is stopping')
     this.options.assertBackendReady?.(session.config.main.backend)
     const turnId = this.#idFactory()
     state.retry = undefined
@@ -281,7 +289,7 @@ export class ChatService {
           delete state.starting
         }
       }
-      if (this.#states.get(session.id) !== state) return
+      if (this.#closed || this.#states.get(session.id) !== state) return
       if (state.active?.id !== turnId) return
       if (state.active.interrupted) {
         this.#finishInterrupted(session.id, state, turnId)
@@ -290,18 +298,20 @@ export class ChatService {
       const itemId = requestItemId(request)
       this.#setStatus(session.id, state, 'running', turnId, itemId)
       const input = await this.#buildInput(session, state, request, recovering, bootstrapping)
+      if (this.#closed) return
       if (state.active?.id !== turnId) return
       if (state.active.interrupted) {
         this.#finishInterrupted(session.id, state, turnId)
         return
       }
       for await (const event of state.agent!.send(input)) {
+        if (this.#closed) return
         if (state.active?.id !== turnId) break
         if (event.type === 'turn_completed') completed = true
         if (event.type === 'error') terminalError = event
         this.#consumeAgentEvent(session.id, state, turnId, itemId, event)
       }
-      if (state.active?.id !== turnId) return
+      if (this.#closed || state.active?.id !== turnId) return
       if (completed) {
         state.retry = undefined
         state.active = undefined
@@ -314,7 +324,7 @@ export class ChatService {
         )
       }
     } catch (error) {
-      if (this.#states.get(session.id) === state && state.active?.id === turnId) {
+      if (!this.#closed && this.#states.get(session.id) === state && state.active?.id === turnId) {
         await this.#finishWithError(session, state, error)
       }
     }

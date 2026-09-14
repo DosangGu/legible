@@ -428,7 +428,7 @@ describe('ChatService', () => {
     expect(() => chats.retry('session-1')).toThrow('cleanup requires recovery')
     await expect(chats.seal('session-1')).rejects.toThrow('cleanup requires recovery')
     expect(backend.start).toHaveBeenCalledOnce()
-    await chats.close()
+    await expect(chats.close()).rejects.toThrow('configuration recovery')
   })
 
   it('waits for startup during shutdown before restoring the worktree', async () => {

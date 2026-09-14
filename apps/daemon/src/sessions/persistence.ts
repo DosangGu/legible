@@ -86,6 +86,12 @@ export class SessionPersistence {
     }
   }
 
+  /** Failed initialization must not write a partially restored registry back to disk. */
+  discard(): void {
+    this.#unsubscribe()
+    for (const id of this.#timers.keys()) this.#cancel(id)
+  }
+
   #enqueueSave(sessionId: string, override?: ReviewSession): Promise<void> {
     return this.#enqueue(sessionId, async () => {
       const session = override ?? this.sessions.get(sessionId)

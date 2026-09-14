@@ -1,5 +1,5 @@
 import { useCallback, useState, type FormEvent } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { AgentBackendKind, type AgentSpec } from '@legible/protocol'
 import { fetchPullRequests, openReview } from '../api.js'
 import { HomeShell, LoadError } from './shell.js'
@@ -7,10 +7,22 @@ import { useResource } from './use-resource.js'
 
 export function RepoPage() {
   const { owner = '', name = '' } = useParams()
-  return <Repository key={`${owner}/${name}`} owner={owner} name={name} />
+  const [search] = useSearchParams()
+  const requested = search.get('pr') ?? ''
+  const pr =
+    /^[1-9]\d*$/u.test(requested) && Number.isSafeInteger(Number(requested)) ? requested : ''
+  return <Repository key={`${owner}/${name}/${pr}`} owner={owner} name={name} initialNumber={pr} />
 }
 
-function Repository({ owner, name }: { owner: string; name: string }) {
+function Repository({
+  owner,
+  name,
+  initialNumber,
+}: {
+  owner: string
+  name: string
+  initialNumber: string
+}) {
   const [page, setPage] = useState(1)
   const load = useCallback(
     (signal: AbortSignal) => fetchPullRequests(owner, name, page, signal),
@@ -23,7 +35,7 @@ function Repository({ owner, name }: { owner: string; name: string }) {
     network: 'off',
     onOutOfScope: 'deny',
   })
-  const [number, setNumber] = useState('')
+  const [number, setNumber] = useState(initialNumber)
   const [opening, setOpening] = useState<number>()
   const [failure, setFailure] = useState('')
   const navigate = useNavigate()
