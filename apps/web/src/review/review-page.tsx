@@ -4,6 +4,7 @@ import type {
   ReviewEvent,
   ReviewFileContent,
   ReviewSession,
+  CodeSearchMatch,
 } from '@legible/protocol'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
@@ -24,6 +25,8 @@ import { CodeView, type InlineWidget, type ScrollRequest } from './code-view.js'
 import { ChatPanel, type ChatItemView } from './chat-panel.js'
 import { DraftCommentCard, NewCommentComposer } from './inline-comments.js'
 import { useComments } from './use-comments.js'
+import { SearchPanel } from './search-panel.js'
+import { SearchFile } from './search-file.js'
 import {
   buildDiffRenderModel,
   buildWholeFileRenderModel,
@@ -199,6 +202,8 @@ function ReviewWorkspace({
     })
   const [submitting, setSubmitting] = useState(false)
   const [reanchoring, setReanchoring] = useState<string>()
+  const [sidebarTab, setSidebarTab] = useState<'files' | 'search'>('files')
+  const [searchTarget, setSearchTarget] = useState<{ match: CodeSearchMatch; query: string }>()
   const [shownRevision, setShownRevision] = useState(revision)
   if (shownRevision !== revision) {
     setShownRevision(revision)
@@ -211,6 +216,7 @@ function ReviewWorkspace({
     setFileCache(new Map())
     setFileError(undefined)
     setReanchoring(undefined)
+    setSearchTarget(undefined)
   }
   const selectedFile = selectedDiffFile(diff, selectedFileIndex)
   const target = selectedFile
@@ -241,7 +247,7 @@ function ReviewWorkspace({
   const selectedChatItem = chatItems.find((item) => item.id === selectedChatItemId)
 
   useEffect(() => {
-    if (viewMode !== 'whole' || cachedFile || !target.path) return
+    if (searchTarget || viewMode !== 'whole' || cachedFile || !target.path) return
 
     const controller = new AbortController()
     void fetchReviewFile(sessionId, target.path, target.side, controller.signal, revision).then(
@@ -260,7 +266,7 @@ function ReviewWorkspace({
       },
     )
     return () => controller.abort()
-  }, [cachedFile, fileKey, sessionId, target.path, target.side, viewMode, revision])
+  }, [cachedFile, fileKey, sessionId, target.path, target.side, viewMode, revision, searchTarget])
 
   useEffect(
     () =>
@@ -276,6 +282,7 @@ function ReviewWorkspace({
         const end = findAnchor(model, path, side, line)
         if (index < 0 || !start || !end) return
         setSelectedFileIndex(index)
+        setSearchTarget(undefined)
         setViewMode('diff')
         setCommentRange(undefined)
         setFocusedRange({ start, end })
@@ -292,6 +299,9 @@ function ReviewWorkspace({
   )
 
   const chooseFile = (index: number) => {
+    setSearchTarget(undefined)
+    setCommentRange(undefined)
+    setAnchor(undefined)
     setSelectedFileIndex(index)
     const rendered = model.files[index]
     if (viewMode === 'diff' && rendered) {
@@ -348,6 +358,7 @@ function ReviewWorkspace({
     if (index < 0 || !start || !end) return
     setSelectedFileIndex(index)
     setViewMode('diff')
+    setSearchTarget(undefined)
     setCommentRange(undefined)
     setFocusedRange({ start, end })
     setAnchor(end)
@@ -467,6 +478,23 @@ function ReviewWorkspace({
       )
     }
   }
+
+  if (searchTarget)
+    viewer = (
+      <SearchFile
+        key={`${sessionId}:${String(revision)}:${searchTarget.match.path}`}
+        sessionId={sessionId}
+        revision={revision}
+        headSha={session.headSha}
+        target={searchTarget.match}
+        query={searchTarget.query}
+        diff={diff}
+        onAnchorSelect={selectAnchor}
+        widgetsFor={widgetsFor}
+        selectedAnchor={anchor}
+        selectedRange={commentRange ?? focusedRange}
+      />
+    )
 
   return (
     <main className="review-shell">
@@ -598,9 +626,38 @@ function ReviewWorkspace({
       )}
 
       <div className={chatCollapsed ? 'review-body chat-is-collapsed' : 'review-body'}>
-        <aside className="file-sidebar" aria-label="Changed files">
-          <div className="sidebar-heading">Changed files</div>
-          <nav>
+        <aside className="file-sidebar" aria-label="Review navigation">
+          <div className="sidebar-tabs">
+            <button
+              type="button"
+              aria-pressed={sidebarTab === 'files'}
+              onClick={() => setSidebarTab('files')}
+            >
+              Changed files
+            </button>
+            <button
+              type="button"
+              aria-pressed={sidebarTab === 'search'}
+              onClick={() => setSidebarTab('search')}
+            >
+              Code search
+            </button>
+          </div>
+          <div hidden={sidebarTab !== 'search'}>
+            <SearchPanel
+              key={`${sessionId}:${String(revision)}`}
+              sessionId={sessionId}
+              revision={revision}
+              headSha={session.headSha}
+              onOpen={(match, query) => {
+                setSearchTarget({ match, query })
+                setAnchor(undefined)
+                setCommentRange(undefined)
+                setFocusedRange(undefined)
+              }}
+            />
+          </div>
+          <nav aria-label="Changed files" hidden={sidebarTab !== 'files'}>
             {diff.files.map((file, index) => {
               const path = file.newPath ?? file.oldPath ?? '(unknown file)'
               return (
@@ -627,20 +684,25 @@ function ReviewWorkspace({
 
         <section className="diff-panel">
           <div className="diff-toolbar">
-            <div className="selected-path" title={target.path}>
-              {target.path}
+            <div className="selected-path" title={searchTarget?.match.path ?? target.path}>
+              {searchTarget ? `${searchTarget.match.path} · pinned HEAD` : target.path}
             </div>
             <div className="view-toggle" aria-label="View mode">
               <button
-                className={viewMode === 'diff' ? 'toggle-active' : ''}
+                className={!searchTarget && viewMode === 'diff' ? 'toggle-active' : ''}
                 type="button"
-                onClick={() => setViewMode('diff')}
+                onClick={() => {
+                  setSearchTarget(undefined)
+                  setViewMode('diff')
+                  setAnchor(undefined)
+                  setCommentRange(undefined)
+                }}
               >
                 Diff
               </button>
               <button
-                className={viewMode === 'whole' ? 'toggle-active' : ''}
-                disabled={!selectedFile}
+                className={searchTarget || viewMode === 'whole' ? 'toggle-active' : ''}
+                disabled={!searchTarget && !selectedFile}
                 type="button"
                 onClick={() => setViewMode('whole')}
               >
@@ -658,7 +720,9 @@ function ReviewWorkspace({
               </>
             ) : (
               (draftComments.error ??
-              'Select a line number to draft a comment. Shift-click to extend.')
+              (searchTarget
+                ? 'Pinned HEAD file · read-only. Only diff hunk lines accept comments.'
+                : 'Select a line number to draft a comment. Shift-click to extend.'))
             )}
           </footer>
         </section>

@@ -1339,3 +1339,131 @@ button {
 .submission-history p {
   white-space: pre-wrap;
 }
+.code-view {
+  display: flex;
+  flex-direction: column;
+}
+.code-editor {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.code-find {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-height: 34px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-1);
+  font-size: 12px;
+}
+.code-find input {
+  min-width: 120px;
+  max-width: 260px;
+  flex: 1;
+}
+.code-find button,
+.sidebar-tabs button,
+.repo-search button,
+.viewer-state button {
+  color: var(--bright);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+.code-find button:disabled,
+.repo-search button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.code-find input,
+.repo-search input {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--bright);
+  background: var(--surface-0);
+  padding: 6px 8px;
+}
+.cm-editor .cm-code-match {
+  background: #554925;
+  color: #fff0bb;
+}
+.cm-editor .cm-code-match-active {
+  background: #85702b;
+  outline: 1px solid #ddc463;
+  color: #fff;
+}
+.cm-editor .cm-search-target {
+  box-shadow: inset 3px 0 var(--accent);
+  background-color: #1b2b40;
+}
+.source-line-number {
+  display: inline-block;
+  width: 100%;
+  text-align: right;
+  padding: 0 8px;
+  font-size: 10px;
+}
+.sidebar-tabs {
+  display: flex;
+  padding: 10px;
+  gap: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.sidebar-tabs button[aria-pressed='true'] {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.repo-search {
+  padding: 12px;
+  font-size: 12px;
+}
+.repo-search form {
+  display: grid;
+  gap: 8px;
+}
+.repo-search input {
+  width: 100%;
+  min-width: 0;
+}
+.search-actions {
+  display: flex;
+  gap: 8px;
+}
+.repo-search p {
+  color: var(--muted);
+}
+.repo-search [role='alert'] {
+  color: var(--red);
+}
+.search-results {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 0;
+}
+.search-results li {
+  margin-bottom: 8px;
+}
+.search-results button {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+}
+.search-results strong,
+.search-results code {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.search-results strong {
+  color: var(--accent);
+}
+.search-results code {
+  font-size: 11px;
+  color: var(--text);
+}

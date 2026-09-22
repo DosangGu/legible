@@ -26,6 +26,7 @@ import { WorktreeConfigProjection } from './worktrees/config-projection.js'
 import { SubmissionService } from './submissions/service.js'
 import { RefreshReviewService } from './sessions/refresh-service.js'
 import { CommentRelocator } from './comments/relocate.js'
+import { CodeSearchService } from './search/service.js'
 
 export type DaemonServices = {
   repoPath?: string
@@ -40,6 +41,7 @@ export type DaemonServices = {
   eventBus: EventBus
   diffs: SessionDiffService
   files: SessionFileService
+  codeSearch: CodeSearchService
   preflight: PreflightService
   sessions: SessionRegistry
   persistence: SessionPersistence
@@ -185,6 +187,7 @@ export function createDaemonServices(options: CreateServicesOptions): DaemonServ
     diffs,
     eventBus,
     files,
+    codeSearch: new CodeSearchService(sessions),
     preflight,
     persistence,
     sessions,

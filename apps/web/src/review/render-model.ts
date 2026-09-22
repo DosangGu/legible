@@ -17,6 +17,7 @@ export type RenderLineKind = DiffLineKind | 'file' | 'hunk' | 'metadata' | 'whol
 
 export type RenderLine = {
   kind: RenderLineKind
+  lineNumber?: number
   leftAnchor?: DiffAnchor
   rightAnchor?: DiffAnchor
   changed?: boolean
@@ -88,11 +89,14 @@ export function buildDiffRenderModel(diff: DiffDocument): RenderModel {
   return { document: text.join('\n'), lines, files }
 }
 
-export function buildWholeFileRenderModel(content: ReviewFileContent, file: DiffFile): RenderModel {
+export function buildWholeFileRenderModel(
+  content: ReviewFileContent,
+  file?: DiffFile,
+): RenderModel {
   const document = content.content ?? ''
   const sourceLines = document.split('\n')
-  const changed = changedLines(file, content.side)
-  const commentable = commentableLines(file, content.side)
+  const changed = file ? changedLines(file, content.side) : new Set<number>()
+  const commentable = file ? commentableLines(file, content.side) : new Map<number, string>()
   const lines = sourceLines.map<RenderLine>((_line, index) => {
     const line = index + 1
     const isTrailingPhantom = index === sourceLines.length - 1 && document.endsWith('\n')
@@ -101,6 +105,7 @@ export function buildWholeFileRenderModel(content: ReviewFileContent, file: Diff
     const anchor = rangeKey ? { path: content.path, line, side: content.side, rangeKey } : undefined
     return {
       kind: 'whole',
+      lineNumber: line,
       ...(anchor && content.side === 'LEFT' ? { leftAnchor: anchor } : {}),
       ...(anchor && content.side === 'RIGHT' ? { rightAnchor: anchor } : {}),
       changed: changed.has(line),
@@ -110,7 +115,7 @@ export function buildWholeFileRenderModel(content: ReviewFileContent, file: Diff
   return {
     document,
     lines,
-    files: [{ index: 0, path: content.path, startLine: 1, source: file }],
+    files: file ? [{ index: 0, path: content.path, startLine: 1, source: file }] : [],
   }
 }
 

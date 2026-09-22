@@ -91,7 +91,7 @@ If it moves or disappears, restore that checkout; Legible will not silently swit
 
 The registry and sessions are saved under `$XDG_STATE_HOME/legible`, falling back to
 `~/.local/state/legible`. Existing session files remain readable; register their matching checkout
-before requesting worktree cleanup. The folder picker, code search UI, repository/session management,
+before requesting worktree cleanup. The folder picker, repository/session management,
 subordinate agents, automatic SSH tunnels, and OS service/autostart installation are not
 implemented yet. No package is published by this implementation.
 
@@ -114,6 +114,27 @@ Refresh prepares a separate worktree generation and saves the session plus chat 
 preparation or saving fails, the previous review remains intact. Cleanup failures retain the old
 worktree and display a warning; safe retention cleanup can remove it later. Dirty worktrees and
 configuration recovery conflicts are never forcibly overwritten.
+
+### Code search
+
+Use **Find in view** or **Ctrl/Cmd+F** to search the displayed diff or whole file. Searches are
+case-sensitive literal text. Enter/F3 moves forward, Shift+Enter/Shift+F3 moves backward, and Escape
+closes the find input. The first 1,000 occurrences are highlighted; narrow the query if capped.
+
+The **Code search** sidebar searches all regular tracked files at the session's pinned HEAD,
+including unchanged files. Search is explicit (Enter or **Search code**) and never calls a model or
+GitHub. Click a result to open the pinned file at its real line number. Files remain read-only;
+only existing diff hunk lines have comment buttons. Return with **Diff** or **Changed files**.
+Unsent comment text and chat remain intact while browsing search results. Refreshing the PR clears
+search results and open search previews; cancelled or obsolete responses cannot replace the new view.
+
+Search excludes symlinks, submodules, binary files, and untracked files. Files over 1 MiB are skipped
+and counted. Results are capped at 200 matching lines (400-character previews), with a 5-second
+budget and 2 MiB of grep output. A limit notice means results may be incomplete. Repository tree
+enumeration is capped at 8 MiB and fails explicitly if incomplete. There is one active search/read
+per session and at most four daemon-wide; busy requests can be retried. Queries are single-line,
+case-sensitive literals up to 256 UTF-8 bytes. File previews require UTF-8 text. Search does not use
+local working-copy edits or expose arbitrary filesystem paths, and runs no text conversion filters.
 
 ## Daemon lifecycle
 
@@ -185,6 +206,12 @@ path, side, line, and optional same-side range. Session-scoped diff/file/chat/co
 refresh requests send `x-legible-review-revision` from the rendered session (missing means legacy
 revision 0). Stale requests receive 409; refetch the session before retrying. MCP leases are likewise
 revision-bound. Session records are now v3 and still read v1/v2 files.
+
+`GET /api/sessions/:sessionId/search?q=...` returns pinned-HEAD paths, line numbers, previews, revision,
+and truncation/skipped-file information. `GET .../search/file?path=...` opens a regular tracked HEAD
+blob, including files outside the diff. Both use the same browser authentication and review revision
+header; neither accepts a caller-provided SHA or filesystem root. The existing `/file` endpoint and
+comment validation remain diff-restricted. HTTP cancellation stops the active search Git process.
 
 Open `/review/:sessionId` in the web app to view a unified, read-only CodeMirror diff. Changed-file
 navigation, left/right line anchors, whole-file context, loading, empty, binary, and API error states

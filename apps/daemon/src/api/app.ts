@@ -1,5 +1,5 @@
 import websocket from '@fastify/websocket'
-import Fastify, { type FastifyInstance } from 'fastify'
+import Fastify, { type FastifyInstance, type FastifyRequest, type FastifyReply } from 'fastify'
 import { BrowserAccess } from './access.js'
 import { installWeb } from './static.js'
 import type { DaemonLifecycle } from '../lifecycle/state.js'
@@ -413,6 +413,21 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     socket.once('error', unsubscribe)
   })
 
+  app.get<{ Params: { sessionId: string }; Querystring: { q?: unknown } }>(
+    '/api/sessions/:sessionId/search',
+    (request, reply) =>
+      withReadAbort(request, reply, (signal) =>
+        options.services.codeSearch.search(request.params.sessionId, request.query.q, signal),
+      ),
+  )
+  app.get<{ Params: { sessionId: string }; Querystring: { path?: unknown } }>(
+    '/api/sessions/:sessionId/search/file',
+    (request, reply) =>
+      withReadAbort(request, reply, (signal) =>
+        options.services.codeSearch.file(request.params.sessionId, request.query.path, signal),
+      ),
+  )
+
   let shutdownError: unknown
   app.addHook('onClose', async () => {
     if (shutdownError) throw shutdownError
@@ -608,6 +623,26 @@ function mapChatError(error: unknown): { status: 400 | 404 | 409; body: ApiError
 
 function isDiffSide(value: unknown): value is DiffSide {
   return value === 'LEFT' || value === 'RIGHT'
+}
+
+async function withReadAbort<T>(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  run: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController()
+  const abort = () => controller.abort()
+  const close = () => {
+    if (!reply.raw.writableEnded) abort()
+  }
+  request.raw.once('aborted', abort)
+  reply.raw.once('close', close)
+  try {
+    return await run(controller.signal)
+  } finally {
+    request.raw.off('aborted', abort)
+    reply.raw.off('close', close)
+  }
 }
 
 export function createSnapshotEvent(

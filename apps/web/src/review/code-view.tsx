@@ -1,10 +1,11 @@
 import { Compartment, EditorState, type Extension, type Range } from '@codemirror/state'
 import { Decoration, EditorView, GutterMarker, WidgetType, gutter } from '@codemirror/view'
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import type { DiffAnchor, RenderModel } from './render-model.js'
 import { sameAnchor } from './render-model.js'
+import { findText } from './find.js'
 
 export type ScrollRequest = {
   line: number
@@ -26,6 +27,8 @@ export function CodeView({
   onAnchorSelect,
   scrollRequest,
   inlineWidgets = [],
+  initialQuery = '',
+  focusLine,
 }: {
   model: RenderModel
   selectedAnchor?: DiffAnchor | undefined
@@ -33,12 +36,79 @@ export function CodeView({
   onAnchorSelect: (anchor: DiffAnchor, extend: boolean) => void
   scrollRequest?: ScrollRequest | undefined
   inlineWidgets?: InlineWidget[] | undefined
+  initialQuery?: string
+  focusLine?: number
 }) {
   const parent = useRef<HTMLDivElement>(null)
   const view = useRef<EditorView>(null)
   const selection = useRef(new Compartment())
   const widgets = useRef(new Compartment())
   const onAnchorSelectRef = useRef(onAnchorSelect)
+  const find = useRef(new Compartment())
+  const input = useRef<HTMLInputElement>(null)
+  const [finding, setFinding] = useState(Boolean(initialQuery))
+  const [query, setQuery] = useState(initialQuery)
+  const [active, setActive] = useState(0)
+  const [previousSource, setPreviousSource] = useState({ document: model.document, initialQuery })
+  if (previousSource.document !== model.document || previousSource.initialQuery !== initialQuery) {
+    setPreviousSource({ document: model.document, initialQuery })
+    setActive(0)
+    if (previousSource.initialQuery !== initialQuery) {
+      setQuery(initialQuery)
+      setFinding(Boolean(initialQuery))
+    }
+  }
+  const found = useMemo(
+    () => findText(model.document, finding ? query : ''),
+    [model.document, finding, query],
+  )
+  const [previousJump, setPreviousJump] = useState({ document: '', line: focusLine, initialQuery })
+  if (
+    previousJump.document !== model.document ||
+    previousJump.line !== focusLine ||
+    previousJump.initialQuery !== initialQuery
+  ) {
+    setPreviousJump({ document: model.document, line: focusLine, initialQuery })
+    if (focusLine) {
+      const from = model.document
+        .split('\n')
+        .slice(0, focusLine - 1)
+        .reduce((length, line) => length + line.length + 1, 0)
+      const match = found.matches.findIndex((match) => match.from >= from)
+      setActive(Math.max(0, match))
+    }
+  }
+  const selected = found.matches.length ? active % found.matches.length : 0
+
+  useEffect(() => {
+    if (finding) {
+      input.current?.focus()
+      input.current?.select()
+    }
+  }, [finding])
+  useEffect(() => {
+    const keydown = (event: KeyboardEvent) => {
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        event.key.toLowerCase() === 'f' &&
+        !document.querySelector('[role="dialog"]')
+      ) {
+        event.preventDefault()
+        setFinding(true)
+        input.current?.focus()
+        input.current?.select()
+      } else if (finding && event.key === 'F3') {
+        event.preventDefault()
+        setActive((value) =>
+          found.matches.length
+            ? (value + (event.shiftKey ? -1 : 1) + found.matches.length) % found.matches.length
+            : 0,
+        )
+      }
+    }
+    window.addEventListener('keydown', keydown)
+    return () => window.removeEventListener('keydown', keydown)
+  }, [finding, found.matches.length])
 
   useEffect(() => {
     onAnchorSelectRef.current = onAnchorSelect
@@ -63,6 +133,7 @@ export function CodeView({
           ),
           selection.current.of([]),
           widgets.current.of([]),
+          find.current.of([]),
           EditorView.theme({
             '&': { height: '100%' },
             '.cm-scroller': { overflow: 'auto' },
@@ -125,7 +196,113 @@ export function CodeView({
     })
   }, [model, scrollRequest])
 
-  return <div className="code-view" ref={parent} />
+  useEffect(() => {
+    const editor = view.current
+    if (!editor) return
+    const marks = found.matches.map((match, index) =>
+      Decoration.mark({
+        class: index === selected ? 'cm-code-match cm-code-match-active' : 'cm-code-match',
+      }).range(match.from, match.to),
+    )
+    if (focusLine && focusLine <= editor.state.doc.lines && focusLine > 0)
+      marks.push(
+        Decoration.line({ class: 'cm-search-target' }).range(editor.state.doc.line(focusLine).from),
+      )
+    editor.dispatch({
+      effects: find.current.reconfigure(EditorView.decorations.of(Decoration.set(marks, true))),
+    })
+    const match = found.matches[selected]
+    if (match) editor.dispatch({ effects: EditorView.scrollIntoView(match.from, { y: 'center' }) })
+  }, [model, found, selected, focusLine])
+
+  // A repository result may be beyond the local highlight cap; still land on its exact line.
+  useEffect(() => {
+    const editor = view.current
+    if (!editor || !focusLine || focusLine < 1 || focusLine > editor.state.doc.lines) return
+    editor.dispatch({
+      effects: EditorView.scrollIntoView(editor.state.doc.line(focusLine).from, { y: 'center' }),
+    })
+  }, [model, focusLine])
+
+  const move = (delta: number) =>
+    setActive((value) =>
+      found.matches.length ? (value + delta + found.matches.length) % found.matches.length : 0,
+    )
+  return (
+    <div className="code-view">
+      <div className="code-find">
+        {finding ? (
+          <>
+            <input
+              ref={input}
+              aria-label="Find in view"
+              placeholder="Case-sensitive literal text"
+              maxLength={256}
+              value={query}
+              onChange={(event) => {
+                setQuery(event.target.value)
+                setActive(0)
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  move(event.shiftKey ? -1 : 1)
+                }
+                if (event.key === 'Escape') {
+                  event.preventDefault()
+                  setFinding(false)
+                  view.current?.focus()
+                }
+              }}
+            />
+            <span role="status">
+              {found.matches.length
+                ? `${String(selected + 1)} / ${String(found.matches.length)}${found.truncated ? '+' : ''}`
+                : query
+                  ? 'No matches'
+                  : 'Type to find'}
+            </span>
+            <button
+              type="button"
+              aria-label="Previous match"
+              disabled={!found.matches.length}
+              onClick={() => move(-1)}
+            >
+              ↑
+            </button>
+            <button
+              type="button"
+              aria-label="Next match"
+              disabled={!found.matches.length}
+              onClick={() => move(1)}
+            >
+              ↓
+            </button>
+            <button type="button" aria-label="Close find" onClick={() => setFinding(false)}>
+              ×
+            </button>
+          </>
+        ) : (
+          <button type="button" onClick={() => setFinding(true)}>
+            Find in view · Ctrl/⌘ F
+          </button>
+        )}
+      </div>
+      <div className="code-editor" ref={parent} />
+    </div>
+  )
+}
+
+class SourceLineMarker extends GutterMarker {
+  constructor(private readonly line: number) {
+    super()
+  }
+  override toDOM(): Node {
+    const span = document.createElement('span')
+    span.className = 'source-line-number'
+    span.textContent = String(this.line)
+    return span
+  }
 }
 
 class AnchorMarker extends GutterMarker {
@@ -162,7 +339,11 @@ function anchorGutter(
     lineMarker(view, line) {
       const metadata = model.lines[view.state.doc.lineAt(line.from).number - 1]
       const anchor = side === 'LEFT' ? metadata?.leftAnchor : metadata?.rightAnchor
-      return anchor ? new AnchorMarker(anchor, onSelect) : null
+      return anchor
+        ? new AnchorMarker(anchor, onSelect)
+        : side === 'RIGHT' && metadata?.lineNumber
+          ? new SourceLineMarker(metadata.lineNumber)
+          : null
     },
   })
 }

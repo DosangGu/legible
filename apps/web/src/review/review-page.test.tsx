@@ -33,6 +33,67 @@ afterEach(() => {
 })
 
 describe('ReviewPage', () => {
+  it('finds visible text with shortcuts and navigates pinned search files without granting non-diff anchors', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/api/sessions/session-1') return jsonResponse(webSession({ reviewRevision: 2 }))
+      if (url.endsWith('/chat')) return jsonResponse(emptyChat())
+      if (url.endsWith('/comments')) return jsonResponse([])
+      if (url.includes('/search?')) {
+        expect(init?.headers).toMatchObject({ 'x-legible-review-revision': '2' })
+        return jsonResponse({
+          query: 'after',
+          reviewRevision: 2,
+          headSha: 'b'.repeat(40),
+          matches: [
+            { path: 'helper.ts', line: 2, preview: 'after helper' },
+            { path: 'src/a.ts', line: 2, preview: 'after' },
+          ],
+          truncated: false,
+          skippedLargeFiles: 0,
+        })
+      }
+      if (url.includes('/search/file?')) {
+        const path = new URL(url, 'http://localhost').searchParams.get('path')!
+        return jsonResponse({
+          path,
+          side: 'RIGHT',
+          sha: 'b'.repeat(40),
+          content: 'one\nafter\nafter again\n',
+          isBinary: false,
+          byteLength: 22,
+        })
+      }
+      return jsonResponse(diffDocument())
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    renderReview()
+    await screen.findByRole('heading', { name: 'session-1' })
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
+    await user.type(await screen.findByRole('textbox', { name: 'Find in view' }), 'after')
+    await waitFor(() => expect(document.querySelectorAll('.cm-code-match').length).toBe(1))
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('textbox', { name: 'Find in view' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Code search' }))
+    await user.type(screen.getByRole('searchbox', { name: 'Search pinned HEAD' }), 'after')
+    await user.click(screen.getByRole('button', { name: 'Search code' }))
+    await user.click(await screen.findByRole('button', { name: /helper.ts:2/ }))
+    await screen.findByRole('textbox', { name: 'Find in view' })
+    await waitFor(() => expect(document.querySelectorAll('.source-line-number').length).toBe(3))
+    expect(screen.queryByRole('button', { name: 'Select RIGHT line 2' })).toBeNull()
+    expect(screen.getByText('1 / 2')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Next match' }))
+    expect(screen.getByText('2 / 2')).toBeTruthy()
+    fireEvent.keyDown(window, { key: 'F3' })
+    expect(screen.getByText('1 / 2')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: /src\/a.ts:2/ }))
+    expect(await screen.findByRole('button', { name: 'Select RIGHT line 2' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Select RIGHT line 2' }))
+    expect(await screen.findByRole('textbox', { name: 'Comment body' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Diff' }))
+    expect(document.querySelector('.selected-path')?.textContent).not.toContain('pinned HEAD')
+  })
   it('refreshes in place, preserves unsaved text, reanchors pending comments, and reviews again explicitly', async () => {
     let session = webSession({
       comments: [

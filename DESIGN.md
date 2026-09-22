@@ -637,6 +637,29 @@ Stages:
 - v1 — in-file search plus worktree-wide grep (grep is needed more often than go-to-definition)
 - v2 — LSP-backed definition and reference lookup (cost jumps sharply; asking the agent covers much of this)
 
+Implemented v1 searches the **pinned HEAD tree**, not mutable working-copy contents: projected agent
+configuration and local edits must not become review search content. The UI has a case-sensitive
+literal finder for the displayed diff/whole file (Ctrl/Cmd+F, Enter/F3 and reverse navigation, Escape)
+and an explicit repository search sidebar. Results open read-only whole files at real line numbers.
+Only ranges already present in the PR diff retain comment anchors, even in a search preview.
+
+`GET /api/sessions/:sessionId/search?q=...` returns `CodeSearchResult` with `headSha`, `reviewRevision`,
+matching paths/lines/previews, `truncated`, and `skippedLargeFiles`. `GET .../search/file?path=...`
+opens regular tracked blobs at the same HEAD. These routes share browser authentication and revision
+guards, reject submitted sessions, and recheck the revision after reading. Neither accepts a SHA,
+checkout path, or arbitrary root. `/file` remains restricted to diff paths. Git tree mode validation
+excludes symlinks and submodules; blob reads use verified object IDs, never filesystem traversal.
+
+Search uses literal, case-sensitive `git grep` against eligible HEAD paths, with NUL-delimited names
+and line numbers, no shell, pager, recursive submodules, lazy fetching, or textconv. Bounds: query
+256 UTF-8 bytes, file 1 MiB, tree enumeration 8 MiB, grep output 2 MiB, 200 matching lines, 400-character
+previews, and 5 seconds per operation. Overlarge files are counted; incomplete grep results are
+marked partial, while incomplete tree enumeration fails closed. Invalid UTF-8 previews are not
+rendered. Limit concurrent search/file reads to one per session and four daemon-wide. Abort Git on
+disconnect/cancellation. PR refresh discards results and previews; ignore obsolete browser replies.
+The view-local finder caps highlights at 1,000 matches. LSP, regex search, and remote GitHub search
+remain outside this increment; no model invocation or MCP expansion is involved.
+
 ---
 
 ## 11. Security
@@ -710,7 +733,8 @@ Riskiest first. **Follow the order.**
 | 9A | Web entry flow | Path registration, multi-repo PR preparation, agent selection, recent reviews, local browser auth |
 | 9B | CLI lifecycle | Background attach/start, singleton ownership, browser handoff, status/idle stop; Unix/WSL |
 | 9C | Same-session refresh/re-review | Whole latest PR diff, conservative anchors, revision guards, submitted history |
-| Later | Entry and review follow-ups | Code search UI, repository/session management, directory picker, native Windows, packaging, remote binding separately |
+| 9D | Code search | View-local literal finder, bounded pinned-HEAD grep, read-only result navigation |
+| Later | Entry and review follow-ups | Repository/session management, directory picker, native Windows, packaging, remote binding separately |
 
 **Step 3 will take twice as long as expected.** A diff viewer with inline widgets is universally underestimated until you build one. If it stalls, dropping side-by-side and shipping unified only is the escape hatch.
 

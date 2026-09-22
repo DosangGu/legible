@@ -16,6 +16,7 @@ import type {
   PreflightReport,
   ReviewUpdate,
   RefreshReviewResponse,
+  CodeSearchResult,
 } from '@legible/protocol'
 
 export class ApiClientError extends Error {
@@ -96,6 +97,35 @@ export function fetchChat(
     headers: revisionHeaders(revision),
     ...(signal ? { signal } : {}),
   })
+}
+
+export function searchCode(
+  sessionId: string,
+  query: string,
+  revision: number,
+  signal?: AbortSignal,
+): Promise<CodeSearchResult> {
+  return request(
+    `/api/sessions/${encodeURIComponent(sessionId)}/search?${new URLSearchParams({ q: query }).toString()}`,
+    {
+      headers: revisionHeaders(revision),
+      ...(signal ? { signal } : {}),
+    },
+  )
+}
+export function fetchSearchFile(
+  sessionId: string,
+  path: string,
+  revision: number,
+  signal?: AbortSignal,
+): Promise<ReviewFileContent> {
+  return request(
+    `/api/sessions/${encodeURIComponent(sessionId)}/search/file?${new URLSearchParams({ path }).toString()}`,
+    {
+      headers: revisionHeaders(revision),
+      ...(signal ? { signal } : {}),
+    },
+  )
 }
 
 export function startReview(sessionId: string, revision = 0): Promise<ChatCommandAccepted> {
