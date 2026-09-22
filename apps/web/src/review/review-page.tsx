@@ -16,6 +16,8 @@ import {
   fetchSessionDiff,
   reconcileSubmission,
   submitReview,
+  checkReviewUpdates,
+  refreshReview,
 } from '../api.js'
 import { useDaemonEvents } from '../events-context.js'
 import { CodeView, type InlineWidget, type ScrollRequest } from './code-view.js'
@@ -36,30 +38,79 @@ type DiffLoadState =
 
 export function ReviewPage() {
   const { sessionId = '' } = useParams()
+  const events = useDaemonEvents()
   const [retry, setRetry] = useState(0)
-  const requestKey = `${sessionId}:${String(retry)}`
+  const requestKey = sessionId
+  const [loadWarning, setLoadWarning] = useState<string>()
   const [loadedDiff, setLoadedDiff] = useState<DiffLoadState>({ key: '', status: 'loading' })
 
   useEffect(() => {
-    const controller = new AbortController()
-    void fetchSession(sessionId, controller.signal)
-      .then(async (session) => ({
-        session,
-        ...(session.submission
-          ? {}
-          : { diff: await fetchSessionDiff(sessionId, controller.signal) }),
-      }))
-      .then(
-        ({ session, diff }) =>
-          setLoadedDiff({ key: requestKey, status: 'ready', session, ...(diff ? { diff } : {}) }),
-        (error: unknown) => {
-          if (!controller.signal.aborted) {
-            setLoadedDiff({ key: requestKey, status: 'error', message: errorMessage(error) })
-          }
-        },
-      )
-    return () => controller.abort()
-  }, [requestKey, sessionId])
+    let controller = new AbortController()
+    let pinnedRevision: number | undefined
+    let submitted = false
+    const load = () => {
+      controller.abort()
+      const current = new AbortController()
+      controller = current
+      void fetchSession(sessionId, current.signal)
+        .then(async (session) => ({
+          session,
+          ...(session.submission
+            ? {}
+            : {
+                diff: await fetchSessionDiff(
+                  sessionId,
+                  current.signal,
+                  session.reviewRevision ?? 0,
+                ),
+              }),
+        }))
+        .then(
+          ({ session, diff }) => {
+            if (!current.signal.aborted) {
+              setLoadWarning(undefined)
+              pinnedRevision = session.reviewRevision ?? 0
+              submitted = Boolean(session.submission)
+              setLoadedDiff({
+                key: requestKey,
+                status: 'ready',
+                session,
+                ...(diff ? { diff } : {}),
+              })
+            }
+          },
+          (error: unknown) => {
+            if (!current.signal.aborted) {
+              setLoadWarning(errorMessage(error))
+              setLoadedDiff((previous) =>
+                previous.key === requestKey && previous.status === 'ready'
+                  ? previous
+                  : { key: requestKey, status: 'error', message: errorMessage(error) },
+              )
+            }
+          },
+        )
+    }
+    load()
+    const unsubscribe = events.subscribe((event) => {
+      if (event.type === 'daemon.snapshot') load()
+      if (event.type === 'session.updated' && event.payload.id === sessionId) {
+        if (
+          (event.payload.reviewRevision ?? 0) !== pinnedRevision ||
+          Boolean(event.payload.submission) !== submitted
+        )
+          load()
+        else
+          setLoadedDiff((previous) =>
+            previous.status === 'ready' ? { ...previous, session: event.payload } : previous,
+          )
+      }
+    })
+    return () => {
+      controller.abort()
+      unsubscribe()
+    }
+  }, [requestKey, sessionId, events, retry])
 
   const diffState: DiffLoadState =
     loadedDiff.key === requestKey ? loadedDiff : { key: requestKey, status: 'loading' }
@@ -87,16 +138,27 @@ export function ReviewPage() {
       />
     )
   }
-  if (!diffState.diff || diffState.diff.files.length === 0) {
+  if (!diffState.diff) {
     return <PageState title="No changes" detail="The pinned revisions have no diff." />
   }
 
   return (
-    <ReviewWorkspace
-      session={diffState.session}
-      diff={diffState.diff}
-      onSubmitted={(session) => setLoadedDiff({ key: requestKey, status: 'ready', session })}
-    />
+    <>
+      {loadWarning && (
+        <div role="alert">
+          {loadWarning}{' '}
+          <button onClick={() => setRetry((value) => value + 1)}>Reload review</button>
+        </div>
+      )}
+      <ReviewWorkspace
+        session={diffState.session}
+        diff={diffState.diff}
+        onSubmitted={(session) => {
+          if (session.submission) setLoadedDiff({ key: requestKey, status: 'ready', session })
+          else setRetry((value) => value + 1)
+        }}
+      />
+    </>
   )
 }
 
@@ -110,9 +172,10 @@ function ReviewWorkspace({
   onSubmitted(session: ReviewSession): void
 }) {
   const sessionId = session.id
+  const revision = session.reviewRevision ?? 0
   const events = useDaemonEvents()
   const model = useMemo(() => buildDiffRenderModel(diff), [diff])
-  const draftComments = useComments(sessionId)
+  const draftComments = useComments(sessionId, revision, session.comments)
   const [selectedFileIndex, setSelectedFileIndex] = useState(0)
   const [viewMode, setViewMode] = useState<'diff' | 'whole'>('diff')
   const [anchor, setAnchor] = useState<DiffAnchor>()
@@ -126,16 +189,51 @@ function ReviewWorkspace({
   const [focusedRange, setFocusedRange] = useState<CommentRange>()
   const [commentBody, setCommentBody] = useState('')
   const [commentError, setCommentError] = useState<string>()
+  const [commentEdits, setCommentEdits] = useState<Record<string, string>>({})
+  const editComment = (id: string, value: string | undefined) =>
+    setCommentEdits((current) => {
+      const next = { ...current }
+      if (value === undefined) delete next[id]
+      else next[id] = value
+      return next
+    })
   const [submitting, setSubmitting] = useState(false)
+  const [reanchoring, setReanchoring] = useState<string>()
+  const [shownRevision, setShownRevision] = useState(revision)
+  if (shownRevision !== revision) {
+    setShownRevision(revision)
+    setSelectedFileIndex(0)
+    setViewMode('diff')
+    setAnchor(undefined)
+    setCommentRange(undefined)
+    setFocusedRange(undefined)
+    setScrollRequest(undefined)
+    setFileCache(new Map())
+    setFileError(undefined)
+    setReanchoring(undefined)
+  }
   const selectedFile = selectedDiffFile(diff, selectedFileIndex)
-  const target = defaultFileTarget(selectedFile)
+  const target = selectedFile
+    ? defaultFileTarget(selectedFile)
+    : { path: '', side: 'RIGHT' as const }
   const targetSha = target.side === 'RIGHT' ? diff.headSha : diff.baseSha
   const fileKey = `${targetSha}\0${target.side}\0${target.path}`
   const cachedFile = fileCache.get(fileKey)
 
-  const liveCommentIds = new Set(draftComments.comments.map((comment) => comment.id))
+  const liveCommentIds = new Set(
+    [
+      ...draftComments.comments,
+      ...(session.submissionHistory ?? []).flatMap((record) => record.comments),
+    ].map((comment) => comment.id),
+  )
   const chatItems = [
     ...draftComments.comments.map((comment, index) => chatItem(comment, index + 1, false)),
+    ...(session.submissionHistory ?? []).flatMap((record) =>
+      record.comments.map((comment, index) => ({
+        ...chatItem(comment, index + 1, false),
+        submitted: true,
+      })),
+    ),
     ...[...knownChatItems.values()]
       .filter((item) => !liveCommentIds.has(item.id))
       .map((item) => ({ ...item, deleted: true })),
@@ -143,11 +241,12 @@ function ReviewWorkspace({
   const selectedChatItem = chatItems.find((item) => item.id === selectedChatItemId)
 
   useEffect(() => {
-    if (viewMode !== 'whole' || cachedFile) return
+    if (viewMode !== 'whole' || cachedFile || !target.path) return
 
     const controller = new AbortController()
-    void fetchReviewFile(sessionId, target.path, target.side, controller.signal).then(
+    void fetchReviewFile(sessionId, target.path, target.side, controller.signal, revision).then(
       (file) => {
+        if (controller.signal.aborted) return
         setFileCache((current) => {
           const next = new Map(current)
           next.set(fileKey, file)
@@ -161,7 +260,7 @@ function ReviewWorkspace({
       },
     )
     return () => controller.abort()
-  }, [cachedFile, fileKey, sessionId, target.path, target.side, viewMode])
+  }, [cachedFile, fileKey, sessionId, target.path, target.side, viewMode, revision])
 
   useEffect(
     () =>
@@ -215,7 +314,6 @@ function ReviewWorkspace({
         current.start.side !== selected.side ||
         current.start.rangeKey !== selected.rangeKey
       ) {
-        setCommentBody('')
         return { start: selected, end: selected }
       }
       return selected.line < current.start.line
@@ -232,7 +330,13 @@ function ReviewWorkspace({
     })
     setSelectedChatItemId(comment.id)
     setChatCollapsed(false)
-    focusComment(comment)
+    if (
+      comment.anchorStatus !== 'needs_review' &&
+      !session.submissionHistory?.some((record) =>
+        record.comments.some((item) => item.id === comment.id),
+      )
+    )
+      focusComment(comment)
   }
 
   const focusComment = (comment: Pick<DraftComment, 'path' | 'side' | 'line' | 'startLine'>) => {
@@ -259,6 +363,7 @@ function ReviewWorkspace({
   const widgetsFor = (rendered: ReturnType<typeof buildDiffRenderModel>): InlineWidget[] => {
     const widgets: InlineWidget[] = []
     for (const [index, comment] of draftComments.comments.entries()) {
+      if (comment.anchorStatus === 'needs_review') continue
       const commentAnchor = findAnchor(rendered, comment.path, comment.side, comment.line)
       if (!commentAnchor) continue
       widgets.push({
@@ -267,6 +372,8 @@ function ReviewWorkspace({
         content: (
           <DraftCommentCard
             comment={comment}
+            draft={commentEdits[comment.id]}
+            onDraftChange={(value) => editComment(comment.id, value)}
             discussing={selectedChatItemId === comment.id}
             onDiscuss={() => openCommentChat(comment, index + 1)}
             onUpdate={async (body) => {
@@ -277,7 +384,7 @@ function ReviewWorkspace({
         ),
       })
     }
-    if (commentRange) {
+    if (commentRange && !reanchoring) {
       widgets.push({
         id: `composer:${commentRange.end.path}:${commentRange.end.side}:${String(commentRange.end.line)}`,
         anchor: commentRange.end,
@@ -331,7 +438,9 @@ function ReviewWorkspace({
     />
   )
 
-  if (viewMode === 'whole') {
+  if (!selectedFile)
+    viewer = <ViewerState title="No changes" detail="The pinned revisions have no diff." />
+  if (viewMode === 'whole' && selectedFile) {
     if (!cachedFile && fileError?.key !== fileKey) {
       viewer = <ViewerState title="Loading whole file…" />
     } else if (!cachedFile) {
@@ -380,11 +489,104 @@ function ReviewWorkspace({
           <span className="additions">+{String(diff.additions)}</span>
           <span className="deletions">−{String(diff.deletions)}</span>
           <span>{String(draftComments.comments.length)} drafts</span>
-          <button className="primary-button" type="button" onClick={() => setSubmitting(true)}>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={draftComments.comments.some(
+              (comment) => comment.anchorStatus === 'needs_review',
+            )}
+            onClick={() => setSubmitting(true)}
+          >
             Submit review
           </button>
         </div>
       </header>
+
+      <RefreshControls session={session} onUpdated={onSubmitted} />
+      {commentBody && !commentRange && (
+        <div className="refresh-status">
+          Unsaved comment text preserved. Select a new line to continue.
+          <textarea
+            aria-label="Preserved comment draft"
+            value={commentBody}
+            onChange={(event) => setCommentBody(event.target.value)}
+          />
+        </div>
+      )}
+      <SubmissionHistory
+        session={session}
+        onDiscuss={(comment, number) => openCommentChat(comment, number)}
+      />
+      {draftComments.comments.some((comment) => comment.anchorStatus === 'needs_review') && (
+        <section className="pending-comments" aria-label="Comments needing location review">
+          <strong>Confirm comment locations before submitting</strong>
+          {draftComments.comments
+            .filter((comment) => comment.anchorStatus === 'needs_review')
+            .map((comment) => (
+              <div key={comment.id}>
+                <p>
+                  {comment.path} · {comment.side} {comment.line} (previous revision)
+                </p>
+                <DraftCommentCard
+                  comment={comment}
+                  draft={commentEdits[comment.id]}
+                  onDraftChange={(value) => editComment(comment.id, value)}
+                  discussing={selectedChatItemId === comment.id}
+                  onDiscuss={() =>
+                    openCommentChat(comment, draftComments.comments.indexOf(comment) + 1)
+                  }
+                  onUpdate={async (body) => {
+                    await draftComments.update(comment.id, body)
+                  }}
+                  onRemove={() => draftComments.remove(comment.id)}
+                />
+                <button
+                  onClick={() => {
+                    setReanchoring(comment.id)
+                    setCommentRange(undefined)
+                  }}
+                >
+                  Choose new location
+                </button>
+                {reanchoring === comment.id && (
+                  <>
+                    <span>Select a diff line or Shift-click a range.</span>
+                    <button
+                      disabled={!commentRange}
+                      onClick={() => {
+                        if (!commentRange) return
+                        void draftComments
+                          .reanchor(comment.id, {
+                            path: commentRange.end.path,
+                            line: commentRange.end.line,
+                            side: commentRange.end.side,
+                            ...(commentRange.start.line !== commentRange.end.line
+                              ? {
+                                  startLine: commentRange.start.line,
+                                  startSide: commentRange.start.side,
+                                }
+                              : {}),
+                          })
+                          .then(
+                            () => {
+                              setReanchoring(undefined)
+                              setCommentRange(undefined)
+                              setCommentError(undefined)
+                            },
+                            (error: unknown) => setCommentError(errorMessage(error)),
+                          )
+                      }}
+                    >
+                      Confirm location
+                    </button>
+                    <button onClick={() => setReanchoring(undefined)}>Cancel</button>
+                  </>
+                )}
+              </div>
+            ))}
+          {commentError && <p role="alert">{commentError}</p>}
+        </section>
+      )}
 
       {submitting && (
         <SubmitReviewDialog
@@ -438,6 +640,7 @@ function ReviewWorkspace({
               </button>
               <button
                 className={viewMode === 'whole' ? 'toggle-active' : ''}
+                disabled={!selectedFile}
                 type="button"
                 onClick={() => setViewMode('whole')}
               >
@@ -461,6 +664,7 @@ function ReviewWorkspace({
         </section>
         <ChatPanel
           sessionId={sessionId}
+          revision={revision}
           collapsed={chatCollapsed}
           {...(selectedChatItemId === undefined ? {} : { selectedItemId: selectedChatItemId })}
           {...(selectedChatItem === undefined ? {} : { item: selectedChatItem })}
@@ -469,7 +673,14 @@ function ReviewWorkspace({
             setSelectedChatItemId(itemId)
             setChatCollapsed(false)
             const selected = chatItems.find((item) => item.id === itemId)
-            if (selected && !selected.deleted) focusComment(selected)
+            if (
+              selected &&
+              !selected.deleted &&
+              !selected.submitted &&
+              draftComments.comments.find((comment) => comment.id === itemId)?.anchorStatus !==
+                'needs_review'
+            )
+              focusComment(selected)
           }}
           onToggle={() => setChatCollapsed((value) => !value)}
         />
@@ -501,11 +712,15 @@ function SubmitReviewDialog({
     setError(undefined)
     try {
       onSubmitted(
-        await submitReview(session.id, {
-          event,
-          ...(body.trim() ? { body } : {}),
-          ...(allowStaleHead ? { allowStaleHead: true } : {}),
-        }),
+        await submitReview(
+          session.id,
+          {
+            event,
+            ...(body.trim() ? { body } : {}),
+            ...(allowStaleHead ? { allowStaleHead: true } : {}),
+          },
+          session.reviewRevision ?? 0,
+        ),
       )
     } catch (caught) {
       if (caught instanceof ApiClientError && caught.code === 'stale_pr_head') {
@@ -601,6 +816,13 @@ function SubmissionPage({
   const submission = session.submission!
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
+  const [historyItemId, setHistoryItemId] = useState<string>()
+  const [showConversation, setShowConversation] = useState(false)
+  const historyItems = [
+    ...(session.submissionHistory ?? []).flatMap((record) => record.comments),
+    ...session.comments,
+  ].map((comment, index) => ({ ...chatItem(comment, index + 1, false), submitted: true }))
+  const historyItem = historyItems.find((item) => item.id === historyItemId)
 
   const run = async (operation: () => Promise<ReviewSession>) => {
     setBusy(true)
@@ -626,7 +848,9 @@ function SubmissionPage({
           className="primary-button"
           type="button"
           disabled={busy}
-          onClick={() => void run(() => reconcileSubmission(session.id))}
+          onClick={() =>
+            void run(() => reconcileSubmission(session.id, session.reviewRevision ?? 0))
+          }
         >
           {busy ? 'Checking…' : 'Reconcile with GitHub'}
         </button>
@@ -650,7 +874,9 @@ function SubmissionPage({
           <button
             type="button"
             disabled={busy}
-            onClick={() => void run(() => cleanupSubmission(session.id))}
+            onClick={() =>
+              void run(() => cleanupSubmission(session.id, session.reviewRevision ?? 0))
+            }
           >
             {busy ? 'Cleaning…' : 'Retry cleanup'}
           </button>
@@ -659,7 +885,155 @@ function SubmissionPage({
         <p>Worktree cleanup {submission.cleanup.status}.</p>
       )}
       {error ? <p>{error}</p> : null}
+      <RefreshControls
+        session={session}
+        onUpdated={(updated) => {
+          if (!updated.submission) onDraftRestored()
+          else onSessionChange(updated)
+        }}
+      />
+      <SubmissionHistory
+        session={session}
+        onDiscuss={(comment) => {
+          setHistoryItemId(comment.id)
+          setShowConversation(true)
+        }}
+      />
+      <button
+        onClick={() => {
+          setHistoryItemId(undefined)
+          setShowConversation((value) => !value)
+        }}
+      >
+        View review conversation
+      </button>
+      {showConversation && (
+        <div className="receipt-chat">
+          <ChatPanel
+            sessionId={session.id}
+            revision={session.reviewRevision ?? 0}
+            collapsed={false}
+            {...(historyItemId ? { selectedItemId: historyItemId } : {})}
+            {...(historyItem ? { item: historyItem } : {})}
+            items={historyItems}
+            onSelectItem={setHistoryItemId}
+            onToggle={() => setShowConversation(false)}
+          />
+        </div>
+      )}
     </PageState>
+  )
+}
+
+function RefreshControls({
+  session,
+  onUpdated,
+}: {
+  session: ReviewSession
+  onUpdated(session: ReviewSession): void
+}) {
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+  const locked =
+    session.submission &&
+    (session.submission.status !== 'submitted' || session.submission.cleanup.status !== 'complete')
+  const run = async (refresh: boolean) => {
+    setBusy(true)
+    try {
+      if (refresh) {
+        const result = await refreshReview(session)
+        setMessage(
+          result.warning ??
+            (result.changed
+              ? 'Updated. Review again or send a message when ready.'
+              : 'Already reviewing the latest diff.'),
+        )
+        onUpdated(result.session)
+      } else {
+        const result = await checkReviewUpdates(session)
+        setMessage(
+          result.headChanged || result.baseChanged
+            ? 'PR updates available. Refresh to review the entire latest diff.'
+            : result.baseChanged === null
+              ? 'HEAD unchanged; refresh to verify the base branch.'
+              : 'No PR updates available.',
+        )
+      }
+    } catch (error) {
+      setMessage(errorMessage(error))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <section className="refresh-status" aria-label="Review updates">
+      <span>Revision {session.reviewRevision ?? 0}</span>
+      <button disabled={busy} onClick={() => void run(false)}>
+        Check for updates
+      </button>
+      <button disabled={busy || Boolean(locked)} onClick={() => void run(true)}>
+        {busy ? 'Checking…' : session.submission ? 'Continue reviewing' : 'Refresh PR'}
+      </button>
+      <span role="status">{message}</span>
+    </section>
+  )
+}
+
+function SubmissionHistory({
+  session,
+  onDiscuss,
+}: {
+  session: ReviewSession
+  onDiscuss?(comment: DraftComment, number: number): void
+}) {
+  const records = [
+    ...(session.submissionHistory ?? []),
+    ...(session.submission?.status === 'submitted'
+      ? [
+          {
+            reviewRevision: session.reviewRevision ?? 0,
+            headSha: session.headSha,
+            baseSha: session.baseSha,
+            comments: session.comments,
+            submission: session.submission,
+          },
+        ]
+      : []),
+  ]
+  if (!records.length) return null
+  return (
+    <details className="submission-history">
+      <summary>Submitted review history ({records.length})</summary>
+      {records.map((record) => (
+        <section key={record.submission.marker}>
+          <h3>
+            Revision {record.reviewRevision} · {reviewEventLabel(record.submission.event)}
+          </h3>
+          <a href={record.submission.htmlUrl} target="_blank" rel="noreferrer">
+            {record.submission.submittedAt} · Open on GitHub
+          </a>
+          <p>
+            <code>
+              {record.baseSha}…{record.headSha}
+            </code>
+          </p>
+          <p>{record.submission.body}</p>
+          {record.comments.map((comment, index) => (
+            <div key={comment.id}>
+              <p>
+                {comment.path} · {comment.side}{' '}
+                {comment.startLine ? `${String(comment.startLine)}–` : ''}
+                {comment.line}
+              </p>
+              <p>{comment.body}</p>
+              {onDiscuss && (
+                <button onClick={() => onDiscuss(comment, index + 1)}>View conversation</button>
+              )}
+            </div>
+          ))}
+        </section>
+      ))}
+    </details>
   )
 }
 
@@ -755,6 +1129,5 @@ function formatBytes(value: number): string {
 
 function selectedDiffFile(diff: DiffDocument, index: number) {
   const file = diff.files[index] ?? diff.files[0]
-  if (!file) throw new Error('Review workspace requires at least one diff file')
   return file
 }

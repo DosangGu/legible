@@ -62,7 +62,9 @@ describe('SubmissionService', () => {
     expect(created[0]).toMatchObject({
       commitId: 'b'.repeat(40),
       event: 'COMMENT',
-      body: 'Summary\n\n<!-- legible-review-session:session-1 -->',
+      body: expect.stringMatching(
+        /^Summary\n\n<!-- legible-review-session:session-1:[a-f0-9-]+ -->$/u,
+      ),
     })
     expect(removed).toBe(1)
     expect(result.submission).toMatchObject({
@@ -137,12 +139,13 @@ describe('SubmissionService', () => {
 
   it('reconciles an ambiguous write by its hidden marker without posting twice', async () => {
     let writes = 0
-    const marker = '<!-- legible-review-session:session-1 -->'
+    let marker = ''
     const github: GitHubClient = {
       async getPullHead() {
         return 'b'.repeat(40)
       },
-      async createReview() {
+      async createReview(input) {
+        marker = input.body
         writes += 1
         throw new GitHubClientError('socket closed')
       },
@@ -151,7 +154,7 @@ describe('SubmissionService', () => {
           {
             id: 44,
             htmlUrl: 'https://example.test/review/44',
-            body: `Summary\n\n${marker}`,
+            body: marker,
             submittedAt: '2026-08-23T01:00:00.000Z',
           },
         ]

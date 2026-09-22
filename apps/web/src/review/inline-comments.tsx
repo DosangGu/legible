@@ -47,19 +47,26 @@ export function NewCommentComposer({
 
 export function DraftCommentCard({
   comment,
+  draft,
+  onDraftChange,
   discussing,
   onDiscuss,
   onUpdate,
   onRemove,
 }: {
   comment: DraftComment
+  draft?: string | undefined
+  onDraftChange?(body: string | undefined): void
   discussing: boolean
   onDiscuss(): void
   onUpdate(body: string): Promise<void>
   onRemove(): Promise<void>
 }) {
-  const [editing, setEditing] = useState(false)
-  const [body, setBody] = useState(comment.body)
+  const [localDraft, setLocalDraft] = useState<string>()
+  const edit = onDraftChange ?? setLocalDraft
+  const editedBody = onDraftChange ? draft : localDraft
+  const editing = editedBody !== undefined
+  const body = editedBody ?? comment.body
   const [error, setError] = useState<string>()
   const [saving, setSaving] = useState(false)
 
@@ -68,7 +75,7 @@ export function DraftCommentCard({
     setError(undefined)
     try {
       await onUpdate(body)
-      setEditing(false)
+      edit(undefined)
     } catch (value) {
       setError(errorMessage(value))
     } finally {
@@ -100,7 +107,7 @@ export function DraftCommentCard({
         <textarea
           aria-label="Edit comment body"
           value={body}
-          onChange={(event) => setBody(event.target.value)}
+          onChange={(event) => edit(event.target.value)}
         />
       ) : (
         <p>{comment.body}</p>
@@ -109,7 +116,7 @@ export function DraftCommentCard({
       <footer>
         {editing ? (
           <>
-            <button type="button" onClick={() => setEditing(false)}>
+            <button type="button" onClick={() => edit(undefined)}>
               Cancel
             </button>
             <button type="button" disabled={saving || !body.trim()} onClick={() => void save()}>
@@ -121,7 +128,7 @@ export function DraftCommentCard({
             <button type="button" aria-pressed={discussing} onClick={onDiscuss}>
               Discuss
             </button>
-            <button type="button" onClick={() => setEditing(true)}>
+            <button type="button" onClick={() => edit(comment.body)}>
               Edit
             </button>
             <button type="button" disabled={saving} onClick={() => void remove()}>

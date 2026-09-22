@@ -43,6 +43,8 @@ export class CommentService {
       const body = validateBody(request.body)
       const range = await this.validateAnchor(session, request)
       const comment: DraftComment = {
+        anchorStatus: 'current',
+        anchorRevision: session.reviewRevision ?? 0,
         id: this.idFactory(),
         path: request.path,
         line: range.line,
@@ -143,9 +145,45 @@ export class CommentService {
   }
 
   #session(sessionId: string): ReviewSession {
+    this.sessions.assertMutable(sessionId)
     const session = this.sessions.get(sessionId)
     if (!session) throw new CommentSessionNotFoundError('Review session not found')
     return session
+  }
+
+  reanchor(
+    sessionId: string,
+    commentId: string,
+    request: CreateDraftCommentRequest,
+  ): Promise<DraftComment> {
+    return this.#serialize(sessionId, async () => {
+      const session = this.#session(sessionId)
+      assertDraft(session)
+      const comment = session.comments.find((item) => item.id === commentId)
+      if (!comment) throw new CommentNotFoundError('Draft comment not found')
+      const range = await this.validateAnchor(session, request)
+      const updated: DraftComment = {
+        ...comment,
+        path: request.path,
+        side: request.side,
+        line: range.line,
+        anchorStatus: 'current',
+        anchorRevision: session.reviewRevision ?? 0,
+      }
+      delete updated.startLine
+      delete updated.startSide
+      if (range.startLine !== undefined) {
+        updated.startLine = range.startLine
+        updated.startSide = request.side
+      }
+      const next = {
+        ...session,
+        comments: session.comments.map((item) => (item.id === commentId ? updated : item)),
+      }
+      await this.persistence.save(next)
+      this.sessions.replace(next)
+      return updated
+    })
   }
 
   #serialize<T>(sessionId: string, mutation: () => Promise<T>): Promise<T> {

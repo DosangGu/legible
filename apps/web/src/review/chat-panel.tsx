@@ -13,10 +13,12 @@ export interface ChatItemView {
   startLine?: number
   body: string
   deleted: boolean
+  submitted?: boolean
 }
 
 export function ChatPanel({
   sessionId,
+  revision = 0,
   collapsed,
   selectedItemId,
   item,
@@ -25,6 +27,7 @@ export function ChatPanel({
   onToggle,
 }: {
   sessionId: string
+  revision?: number
   collapsed: boolean
   selectedItemId?: string
   item?: ChatItemView
@@ -32,7 +35,7 @@ export function ChatPanel({
   onSelectItem(itemId?: string): void
   onToggle(): void
 }) {
-  const chat = useChat(sessionId)
+  const chat = useChat(sessionId, revision)
   const [message, setMessage] = useState('')
   const [commandFailure, setCommandFailure] = useState<{
     itemId?: string
@@ -49,6 +52,7 @@ export function ChatPanel({
         entry.itemId === selectedItemId || (entry.kind === 'notice' && entry.scope === 'session'),
     ) ?? []
   const deleted = selectedItemId !== undefined && item?.deleted !== false
+  const readOnly = deleted || item?.submitted === true
   const commandError =
     commandFailure && commandFailure.itemId === selectedItemId ? commandFailure.message : undefined
 
@@ -68,7 +72,7 @@ export function ChatPanel({
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
-    if (!message.trim() || busy || deleted) return
+    if (!message.trim() || busy || readOnly) return
     const sent = message
     setMessage('')
     void run(() => chat.send(sent, selectedItemId)).then((succeeded) => {
@@ -132,10 +136,12 @@ export function ChatPanel({
             {deleted && (
               <ChatEmpty text="This comment was deleted. Its conversation is read-only." />
             )}
+            {item?.submitted && (
+              <ChatEmpty text="Submitted comment. Its conversation is read-only." />
+            )}
             {!selectedItemId &&
               snapshot &&
-              entries.length === 0 &&
-              snapshot.entries.length === 0 &&
+              (snapshot.reviewPending || (entries.length === 0 && snapshot.entries.length === 0)) &&
               snapshot.status !== 'unavailable' && (
                 <div className="chat-start">
                   <p>Ask {backendLabel} to review the pinned diff and investigate related code.</p>
@@ -145,7 +151,7 @@ export function ChatPanel({
                     disabled={busy}
                     onClick={() => void run(chat.start)}
                   >
-                    {busy ? 'Starting…' : 'Start review'}
+                    {busy ? 'Starting…' : snapshot.reviewPending ? 'Review again' : 'Start review'}
                   </button>
                 </div>
               )}
@@ -171,7 +177,7 @@ export function ChatPanel({
           {(commandError || retryHere) && (
             <div className="chat-command-error">
               <span>{commandError ?? 'The last turn failed.'}</span>
-              {retryHere && (
+              {retryHere && !readOnly && (
                 <button type="button" onClick={() => void run(chat.retry)}>
                   Retry
                 </button>
@@ -179,7 +185,7 @@ export function ChatPanel({
             </div>
           )}
 
-          {snapshot && snapshot.status !== 'unavailable' && !deleted && (
+          {snapshot && snapshot.status !== 'unavailable' && !readOnly && (
             <form className="chat-composer" onSubmit={submit}>
               <textarea
                 aria-label="Chat message"

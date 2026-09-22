@@ -9,7 +9,7 @@ import type { ReviewSession } from '@legible/protocol'
 import type { PersistedChatState } from '../chats/service.js'
 
 export type PersistedSessionRecord = {
-  version: 2
+  version: 2 | 3
   session: ReviewSession
   chat?: PersistedChatState
 }
@@ -81,14 +81,14 @@ export class SessionStore {
 function validateRecord(value: unknown, path: string): PersistedSessionRecord {
   if (
     !isRecord(value) ||
-    (value.version !== 1 && value.version !== 2) ||
+    (value.version !== 1 && value.version !== 2 && value.version !== 3) ||
     !isReviewSession(value.session) ||
     (value.chat !== undefined && !isPersistedChat(value.chat))
   ) {
     throw new SessionStoreError(`Invalid or unsupported session file: ${path}`)
   }
   safeId(value.session.id)
-  return { ...(value as PersistedSessionRecord), version: 2 }
+  return { ...(value as PersistedSessionRecord), version: 3 }
 }
 
 function isReviewSession(value: unknown): value is ReviewSession {
@@ -108,6 +108,26 @@ function isReviewSession(value: unknown): value is ReviewSession {
     typeof value.baseSha === 'string' &&
     typeof value.worktreePath === 'string' &&
     typeof value.createdAt === 'string' &&
+    (value.reviewRevision === undefined || isRevision(value.reviewRevision)) &&
+    (value.baseTipSha === undefined || typeof value.baseTipSha === 'string') &&
+    (value.baseRef === undefined || typeof value.baseRef === 'string') &&
+    (value.worktreeGeneration === undefined ||
+      (typeof value.worktreeGeneration === 'string' &&
+        /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u.test(value.worktreeGeneration))) &&
+    (value.submissionHistory === undefined ||
+      (Array.isArray(value.submissionHistory) &&
+        value.submissionHistory.every(
+          (entry) =>
+            isRecord(entry) &&
+            isRevision(entry.reviewRevision) &&
+            typeof entry.headSha === 'string' &&
+            typeof entry.baseSha === 'string' &&
+            Array.isArray(entry.comments) &&
+            entry.comments.every(isDraftComment) &&
+            isRecord(entry.submission) &&
+            entry.submission.status === 'submitted' &&
+            isReviewSubmission(entry.submission),
+        ))) &&
     (value.submission === undefined || isReviewSubmission(value.submission))
   )
 }
@@ -147,6 +167,10 @@ function isDraftComment(value: unknown): boolean {
     typeof value.line === 'number' &&
     (value.side === 'LEFT' || value.side === 'RIGHT') &&
     typeof value.body === 'string' &&
+    (value.anchorStatus === undefined ||
+      value.anchorStatus === 'current' ||
+      value.anchorStatus === 'needs_review') &&
+    (value.anchorRevision === undefined || isRevision(value.anchorRevision)) &&
     (value.origin === 'human' ||
       value.origin === AgentBackendKind.Codex ||
       value.origin === AgentBackendKind.Claude) &&
@@ -164,12 +188,17 @@ function isAgentSpec(value: unknown): boolean {
   )
 }
 
+function isRevision(value: unknown): boolean {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
+
 function isPersistedChat(value: unknown): boolean {
   if (!isRecord(value) || !isRecord(value.snapshot)) return false
   const snapshot = value.snapshot
   return (
     typeof snapshot.sessionId === 'string' &&
     typeof snapshot.revision === 'number' &&
+    (snapshot.reviewPending === undefined || typeof snapshot.reviewPending === 'boolean') &&
     typeof snapshot.status === 'string' &&
     (snapshot.backend === AgentBackendKind.Codex || snapshot.backend === AgentBackendKind.Claude) &&
     Array.isArray(snapshot.entries) &&

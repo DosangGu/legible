@@ -11,8 +11,10 @@ import { WorktreeService, type PreparedWorktree, type WorktreeSweepResult } from
 
 export type ReviewWorktree = PreparedWorktree & { baseSha: string }
 export interface ReviewWorktrees {
-  prepare(repoId: string, pull: PullRequestDetails): Promise<ReviewWorktree>
-  remove(session: Pick<ReviewSession, 'repoId' | 'prNumber' | 'worktreePath'>): Promise<boolean>
+  prepare(repoId: string, pull: PullRequestDetails, generation?: string): Promise<ReviewWorktree>
+  remove(
+    session: Pick<ReviewSession, 'repoId' | 'prNumber' | 'worktreePath' | 'worktreeGeneration'>,
+  ): Promise<boolean>
 }
 
 export class WorktreeManager implements ReviewWorktrees {
@@ -26,12 +28,16 @@ export class WorktreeManager implements ReviewWorktrees {
     this.#stateDirectory = resolve(options.stateDirectory ?? defaultStateDirectory())
   }
 
-  async prepare(repoId: string, pull: PullRequestDetails): Promise<ReviewWorktree> {
-    return this.#withRepo(repoId, (worktrees) => worktrees.preparePinned(pull))
+  async prepare(
+    repoId: string,
+    pull: PullRequestDetails,
+    generation?: string,
+  ): Promise<ReviewWorktree> {
+    return this.#withRepo(repoId, (worktrees) => worktrees.preparePinned(pull, generation))
   }
 
   async remove(
-    session: Pick<ReviewSession, 'repoId' | 'prNumber' | 'worktreePath'>,
+    session: Pick<ReviewSession, 'repoId' | 'prNumber' | 'worktreePath' | 'worktreeGeneration'>,
   ): Promise<boolean> {
     const repo = this.repos.get(session.repoId)
     const expected = join(
@@ -39,7 +45,7 @@ export class WorktreeManager implements ReviewWorktrees {
       'worktrees',
       repo.owner,
       repo.name,
-      `pr-${String(session.prNumber)}`,
+      `pr-${String(session.prNumber)}${session.worktreeGeneration ? `-${session.worktreeGeneration}` : ''}`,
     )
     if (resolve(session.worktreePath) !== expected)
       throw new ServiceError(
@@ -47,7 +53,9 @@ export class WorktreeManager implements ReviewWorktrees {
         'The session worktree does not belong to this registered repository',
         409,
       )
-    return this.#withRepo(repo.id, (worktrees) => worktrees.remove(session.prNumber))
+    return this.#withRepo(repo.id, (worktrees) =>
+      worktrees.remove(session.prNumber, session.worktreeGeneration),
+    )
   }
 
   async sweep(activePaths: readonly string[]): Promise<WorktreeSweepResult> {

@@ -12,6 +12,11 @@ export type Repo = {
 }
 
 export type ReviewSession = {
+  reviewRevision?: number
+  baseTipSha?: string
+  baseRef?: string
+  worktreeGeneration?: string
+  submissionHistory?: SubmittedReviewRecord[]
   id: string
   repoId: string
   prNumber: number
@@ -25,6 +30,25 @@ export type ReviewSession = {
   lastOpenedAt?: string
   pullRequest?: { title: string; url: string }
 }
+
+export type SubmittedReviewRecord = {
+  reviewRevision: number
+  headSha: string
+  baseSha: string
+  comments: DraftComment[]
+  submission: Extract<ReviewSubmission, { status: 'submitted' }>
+}
+
+export type ReviewUpdate = {
+  reviewRevision: number
+  pinnedHeadSha: string
+  headSha: string
+  baseTipSha: string
+  baseRef: string
+  headChanged: boolean
+  baseChanged: boolean | null
+}
+export type RefreshReviewResponse = { session: ReviewSession; changed: boolean; warning?: string }
 
 export type PullRequestSummary = {
   number: number
@@ -78,6 +102,8 @@ export type SubmitReviewRequest = {
 }
 
 export type DraftComment = {
+  anchorStatus?: 'current' | 'needs_review'
+  anchorRevision?: number
   id: string
   path: string
   line: number

@@ -31,6 +31,39 @@ const codexSpec: AgentSpec = {
 }
 
 describe('ChatService', () => {
+  it('closes the old agent for refresh, retains the transcript, and reviews the whole diff explicitly', async () => {
+    const backend = scriptedBackend(() => [{ type: 'turn_completed' }])
+    const { chats, sessions } = setup(backend)
+    chats.send('session-1', 'Remember this discussion')
+    await waitForSnapshot(chats, (value) => value.status === 'idle')
+    const next = {
+      ...sessions.get('session-1')!,
+      reviewRevision: 1,
+      worktreePath: '/new/generation',
+    }
+    const prepared = await chats.prepareRefresh('session-1', next)
+    expect(backend.close).toHaveBeenCalledOnce()
+    expect(backend.start).toHaveBeenCalledOnce()
+    sessions.replace(next)
+    chats.restore('session-1', prepared)
+    chats.startReview('session-1')
+    await waitForSnapshot(chats, (value) => value.status === 'idle')
+    expect(backend.start.mock.calls[1]?.[0].cwd).toBe('/new/generation')
+    expect(backend.inputs[1]).toContain('Remember this discussion')
+    expect(backend.inputs[1]).toContain('Review revision 1')
+    expect(backend.inputs[1]).toContain('BEGIN UNTRUSTED DIFF')
+    expect(backend.inputs[1]).toContain('+after')
+    expect(() => chats.startReview('session-1')).toThrow('already started')
+    const nextAgain = { ...next, reviewRevision: 2 }
+    const again = await chats.prepareRefresh('session-1', nextAgain)
+    sessions.replace(nextAgain)
+    chats.restore('session-1', again)
+    chats.send('session-1', 'What changed?')
+    await waitForSnapshot(chats, (value) => value.status === 'idle')
+    expect(backend.inputs[2]).toContain('BEGIN UNTRUSTED DIFF')
+    expect(backend.inputs[2]).toContain('What changed?')
+    await chats.close()
+  })
   it('starts explicitly, streams normalized entries, and retains a reconnect snapshot', async () => {
     const events: AgentEvent[] = [
       { type: 'session_started', id: 'codex-1', model: 'test-model' },

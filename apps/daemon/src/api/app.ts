@@ -5,6 +5,7 @@ import { installWeb } from './static.js'
 import type { DaemonLifecycle } from '../lifecycle/state.js'
 import { ServiceError } from '../common/service-error.js'
 import { GitHubClientError } from '../github/client.js'
+import * as z from 'zod/v4'
 import {
   DirtyWorktreeError,
   GitCommandError,
@@ -76,6 +77,26 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   options.lifecycle?.install(app)
   options.access.install(app)
+  app.addHook('onRoute', (route) => {
+    if (
+      !route.url.startsWith('/api/sessions/:sessionId/') ||
+      route.url.endsWith('/mcp') ||
+      route.url.endsWith('/open')
+    )
+      return
+    const handler = route.handler
+    route.handler = function (request, reply) {
+      const { sessionId } = request.params as { sessionId: string }
+      const raw = request.headers['x-legible-review-revision'] ?? '0'
+      const revision = Number(raw)
+      if (typeof raw !== 'string' || !/^\d+$/u.test(raw) || !Number.isSafeInteger(revision))
+        throw new ServiceError('invalid_review_revision', 'Invalid review revision')
+      return options.services.sessions.withRevision(sessionId, revision, () => {
+        options.services.sessions.assertMutable(sessionId)
+        return handler.call(this, request, reply)
+      })
+    }
+  })
   if (options.webDirectory) installWeb(app, options.webDirectory)
 
   await app.register(websocket, {
@@ -121,6 +142,42 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   })
   app.post<{ Params: { sessionId: string } }>('/api/sessions/:sessionId/open', async (request) =>
     options.services.openReviews.touch(request.params.sessionId),
+  )
+
+  app.get<{ Params: { sessionId: string } }>('/api/sessions/:sessionId/updates', (request) =>
+    options.services.refreshReviews.check(request.params.sessionId),
+  )
+  app.post<{ Params: { sessionId: string } }>('/api/sessions/:sessionId/refresh', (request) =>
+    options.services.refreshReviews.refresh(request.params.sessionId),
+  )
+  app.post<{ Params: { sessionId: string; commentId: string }; Body: unknown }>(
+    '/api/sessions/:sessionId/comments/:commentId/reanchor',
+    (request) => {
+      const anchor = z
+        .object({
+          path: z.string().min(1),
+          line: z.number().int().positive(),
+          side: z.enum(['LEFT', 'RIGHT']),
+          startLine: z.number().int().positive().optional(),
+          startSide: z.enum(['LEFT', 'RIGHT']).optional(),
+        })
+        .strict()
+        .safeParse(request.body)
+      if (!anchor.success) throw new InvalidCommentError('A valid anchor is required')
+      const { path, line, side, startLine, startSide } = anchor.data
+      return options.services.comments.reanchor(
+        request.params.sessionId,
+        request.params.commentId,
+        {
+          path,
+          line,
+          side,
+          ...(startLine === undefined ? {} : { startLine }),
+          ...(startSide === undefined ? {} : { startSide }),
+          body: '',
+        },
+      )
+    },
   )
 
   app.get<{ Params: { sessionId: string } }>('/api/sessions/:sessionId', async (request, reply) => {

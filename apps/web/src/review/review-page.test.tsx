@@ -33,6 +33,102 @@ afterEach(() => {
 })
 
 describe('ReviewPage', () => {
+  it('refreshes in place, preserves unsaved text, reanchors pending comments, and reviews again explicitly', async () => {
+    let session = webSession({
+      comments: [
+        {
+          id: 'draft',
+          path: 'src/a.ts',
+          side: 'RIGHT',
+          line: 2,
+          body: 'Existing draft',
+          origin: 'human',
+          createdAt: '',
+        },
+      ],
+    })
+    let chat = emptyChat()
+    const commands: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input)
+        if (url === '/api/sessions/session-1') return jsonResponse(session)
+        if (url.endsWith('/diff'))
+          return jsonResponse({ ...diffDocument(), headSha: session.headSha })
+        if (url.endsWith('/comments')) return jsonResponse(session.comments)
+        if (url.endsWith('/chat')) return jsonResponse(chat)
+        if (url.endsWith('/refresh')) {
+          expect(init?.headers).toMatchObject({ 'x-legible-review-revision': '0' })
+          session = {
+            ...session,
+            reviewRevision: 1,
+            headSha: 'c'.repeat(40),
+            comments: session.comments.map((comment) => ({
+              ...comment,
+              anchorStatus: 'needs_review',
+            })),
+          }
+          chat = { ...chat, revision: 1, reviewPending: true }
+          return jsonResponse({ session, changed: true })
+        }
+        if (url.endsWith('/reanchor')) {
+          expect(init?.headers).toMatchObject({ 'x-legible-review-revision': '1' })
+          const anchor = JSON.parse(String(init?.body)) as { line: number }
+          session.comments = session.comments.map((comment) => ({
+            ...comment,
+            line: anchor.line,
+            anchorStatus: 'current',
+          }))
+          return jsonResponse(session.comments[0])
+        }
+        if (url.endsWith('/chat/start')) {
+          expect(init?.headers).toMatchObject({ 'x-legible-review-revision': '1' })
+          commands.push(url)
+          chat = { ...chat, reviewPending: false }
+          return jsonResponse({ sessionId: session.id, turnId: 'turn', revision: 2 })
+        }
+        throw new Error(`Unexpected request: ${url}`)
+      }),
+    )
+    const user = userEvent.setup()
+    renderReview()
+    await user.type(await screen.findByRole('textbox', { name: 'Chat message' }), 'Unsent question')
+    await user.click(await screen.findByRole('button', { name: 'Select RIGHT line 2' }))
+    await user.type(await screen.findByRole('textbox', { name: 'Comment body' }), 'Unsent comment')
+    await user.click(await screen.findByRole('button', { name: 'Edit' }))
+    await user.clear(await screen.findByRole('textbox', { name: 'Edit comment body' }))
+    await user.type(screen.getByRole('textbox', { name: 'Edit comment body' }), 'Unsent edit')
+    await user.click(screen.getByRole('button', { name: 'Refresh PR' }))
+    expect(await screen.findByRole('button', { name: 'Review again' })).toBeTruthy()
+    expect(
+      (screen.getByRole('textbox', { name: 'Chat message' }) as HTMLTextAreaElement).value,
+    ).toBe('Unsent question')
+    expect(
+      (screen.getByRole('textbox', { name: 'Preserved comment draft' }) as HTMLTextAreaElement)
+        .value,
+    ).toBe('Unsent comment')
+    expect(
+      ((await screen.findByRole('textbox', { name: 'Edit comment body' })) as HTMLTextAreaElement)
+        .value,
+    ).toBe('Unsent edit')
+    expect(document.querySelector('.cm-inline-comment-widget .draft-comment-card')).toBeNull()
+    expect(
+      (screen.getByRole('button', { name: 'Submit review' }) as HTMLButtonElement).disabled,
+    ).toBe(true)
+    expect(commands).toEqual([])
+    await user.click(screen.getByRole('button', { name: 'Choose new location' }))
+    await user.click(screen.getByRole('button', { name: 'Select RIGHT line 3' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm location' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('region', { name: 'Comments needing location review' })).toBeNull(),
+    )
+    expect(
+      (screen.getByRole('button', { name: 'Submit review' }) as HTMLButtonElement).disabled,
+    ).toBe(false)
+    await user.click(screen.getByRole('button', { name: 'Review again' }))
+    expect(commands).toHaveLength(1)
+  })
   it('renders a diff, selects an anchor, and loads the whole file', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = String(input)
@@ -142,7 +238,8 @@ describe('ReviewPage', () => {
 
     await waitFor(() => expect(resolveResponse).toBeTypeOf('function'))
     resolveResponse(jsonResponse({ ...diffDocument(), files: [], additions: 0, deletions: 0 }))
-    expect(await screen.findByRole('heading', { name: 'No changes' })).toBeTruthy()
+    expect(await screen.findByText('No changes')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Refresh PR' })).toBeTruthy()
   })
 
   it('starts the review explicitly and collapses tool activity with the chat panel', async () => {

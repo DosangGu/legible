@@ -4,16 +4,22 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { fetchChat, interruptChat, retryChat, sendChatMessage, startReview } from '../api.js'
 import { useDaemonEvents } from '../events-context.js'
 
-export function useChat(sessionId: string) {
+export function useChat(sessionId: string, revision = 0) {
   const events = useDaemonEvents()
   const [snapshot, setSnapshot] = useState<ChatSnapshot>()
   const snapshotRef = useRef<ChatSnapshot | undefined>(undefined)
   const [loadError, setLoadError] = useState<string>()
+  const key = `${sessionId}:${String(revision)}`
+  const currentKey = useRef(key)
+  useEffect(() => {
+    currentKey.current = key
+  }, [key])
 
   const refresh = useCallback(
     async (signal?: AbortSignal) => {
       try {
-        const loaded = await fetchChat(sessionId, signal)
+        const loaded = await fetchChat(sessionId, signal, revision)
+        if (signal?.aborted || currentKey.current !== key) return
         const current = snapshotRef.current
         if (
           !current ||
@@ -25,16 +31,17 @@ export function useChat(sessionId: string) {
         }
         setLoadError(undefined)
       } catch (error) {
-        if (!signal?.aborted) setLoadError(errorMessage(error))
+        if (!signal?.aborted && currentKey.current === key) setLoadError(errorMessage(error))
       }
     },
-    [sessionId],
+    [sessionId, revision, key],
   )
 
   useEffect(() => {
     const controller = new AbortController()
-    void fetchChat(sessionId, controller.signal).then(
+    void fetchChat(sessionId, controller.signal, revision).then(
       (loaded) => {
+        if (controller.signal.aborted) return
         const current = snapshotRef.current
         if (
           !current ||
@@ -51,7 +58,7 @@ export function useChat(sessionId: string) {
       },
     )
     return () => controller.abort()
-  }, [events.connectionGeneration, sessionId])
+  }, [events.connectionGeneration, sessionId, revision])
 
   useEffect(
     () =>
@@ -81,11 +88,11 @@ export function useChat(sessionId: string) {
     snapshot: snapshot?.sessionId === sessionId ? snapshot : undefined,
     loadError,
     refresh,
-    start: () => command(() => startReview(sessionId)),
+    start: () => command(() => startReview(sessionId, revision)),
     send: (message: string, itemId?: string) =>
-      command(() => sendChatMessage(sessionId, message, itemId)),
-    interrupt: () => command(() => interruptChat(sessionId)),
-    retry: () => command(() => retryChat(sessionId)),
+      command(() => sendChatMessage(sessionId, message, itemId, revision)),
+    interrupt: () => command(() => interruptChat(sessionId, revision)),
+    retry: () => command(() => retryChat(sessionId, revision)),
   }
 }
 
@@ -95,6 +102,7 @@ export function applyChatEvent(current: ChatSnapshot, payload: ChatEventPayload)
   const event = payload.event
   switch (event.type) {
     case 'status':
+      if (event.status === 'running') next.reviewPending = false
       next.status = event.status
       if (event.currentTurnId === undefined) delete next.currentTurnId
       else next.currentTurnId = event.currentTurnId

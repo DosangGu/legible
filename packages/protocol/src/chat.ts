@@ -43,6 +43,7 @@ export type ChatNoticeEntry = ChatEntryBase & {
 export type ChatEntry = ChatMessageEntry | ChatToolEntry | ChatNoticeEntry
 
 export type ChatSnapshot = {
+  reviewPending?: boolean
   sessionId: string
   revision: number
   status: ChatStatus

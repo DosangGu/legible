@@ -24,12 +24,15 @@ import { RepositoryService } from './repos/service.js'
 import { OpenReviewService } from './sessions/open-service.js'
 import { WorktreeConfigProjection } from './worktrees/config-projection.js'
 import { SubmissionService } from './submissions/service.js'
+import { RefreshReviewService } from './sessions/refresh-service.js'
+import { CommentRelocator } from './comments/relocate.js'
 
 export type DaemonServices = {
   repoPath?: string
   repos: RepositoryService
   pullRequests: PullRequestReader
   openReviews: OpenReviewService
+  refreshReviews: RefreshReviewService
   agents: Record<AgentBackendKind, AgentBackend>
   chats: ChatService
   comments: CommentService
@@ -164,6 +167,17 @@ export function createDaemonServices(options: CreateServicesOptions): DaemonServ
     repos,
     pullRequests,
     openReviews,
+    refreshReviews: new RefreshReviewService(
+      sessions,
+      repos,
+      pullRequests,
+      worktrees,
+      diffs,
+      new CommentRelocator(runner, comments),
+      chats,
+      persistence,
+      mutations,
+    ),
     agents: { [AgentBackendKind.Codex]: codex, [AgentBackendKind.Claude]: claude },
     chats,
     comments,

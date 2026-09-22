@@ -2,6 +2,9 @@ export { AgentBackendKind } from './model.js'
 
 export type {
   AgentSpec,
+  SubmittedReviewRecord,
+  ReviewUpdate,
+  RefreshReviewResponse,
   CreateSessionRequest,
   CreateSessionResponse,
   PullRequestSummary,

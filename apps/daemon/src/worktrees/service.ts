@@ -12,7 +12,8 @@ import {
 const gitTimeoutMs = 60_000
 const defaultTtlMs = 14 * 24 * 60 * 60 * 1_000
 const repoPartPattern = /^[A-Za-z0-9_.-]+$/u
-const pullRequestDirectoryPattern = /^pr-([1-9][0-9]*)$/u
+const pullRequestDirectoryPattern =
+  /^pr-([1-9][0-9]*)(?:-([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}))?$/u
 
 export type PreparedWorktree = {
   path: string
@@ -113,18 +114,21 @@ export class WorktreeService {
   }
 
   /** Caller serializes by the clone's common Git directory. Never use shared FETCH_HEAD. */
-  async preparePinned(input: {
-    number: number
-    headSha: string
-    baseSha: string
-    baseRef: string
-  }): Promise<PreparedWorktree & { baseSha: string }> {
+  async preparePinned(
+    input: {
+      number: number
+      headSha: string
+      baseSha: string
+      baseRef: string
+    },
+    generation?: string,
+  ): Promise<PreparedWorktree & { baseSha: string }> {
     assertPullRequestNumber(input.number)
     if (!/^[a-f0-9]{40,64}$/u.test(input.headSha) || !/^[a-f0-9]{40,64}$/u.test(input.baseSha))
       throw new ServiceError('invalid_revision', 'GitHub returned an invalid revision', 502)
     const context = await this.#context()
     await this.#git(['check-ref-format', `refs/heads/${input.baseRef}`], context.repoPath)
-    const target = worktreePath(context.repoRoot, input.number)
+    const target = worktreePath(context.repoRoot, input.number, generation)
     const registered = await this.#registeredWorktrees(context.repoPath)
     const previous = registered.get(target)
     if (!previous && (await pathExists(target))) throw new WorktreePathConflictError(target)
@@ -187,10 +191,10 @@ export class WorktreeService {
     return { path: target, headSha: head, baseSha, reused: false }
   }
 
-  async remove(prNumber: number): Promise<boolean> {
+  async remove(prNumber: number, generation?: string): Promise<boolean> {
     assertPullRequestNumber(prNumber)
     const context = await this.#context()
-    const target = worktreePath(context.repoRoot, prNumber)
+    const target = worktreePath(context.repoRoot, prNumber, generation)
     await this.#git(['worktree', 'prune'], context.repoPath)
     const registered = await this.#registeredWorktrees(context.repoPath)
     const entry = registered.get(target)
@@ -366,8 +370,13 @@ function assertOutsideRepo(repoPath: string, candidate: string): void {
   }
 }
 
-function worktreePath(repoRoot: string, prNumber: number): string {
-  const target = resolve(repoRoot, `pr-${String(prNumber)}`)
+function worktreePath(repoRoot: string, prNumber: number, generation?: string): string {
+  if (
+    generation !== undefined &&
+    !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u.test(generation)
+  )
+    throw new Error('Invalid worktree generation')
+  const target = resolve(repoRoot, `pr-${String(prNumber)}${generation ? `-${generation}` : ''}`)
   if (dirname(target) !== repoRoot || !isAbsolute(target)) {
     throw new Error(`Unsafe worktree path: ${target}`)
   }

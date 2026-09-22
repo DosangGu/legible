@@ -91,9 +91,29 @@ If it moves or disappears, restore that checkout; Legible will not silently swit
 
 The registry and sessions are saved under `$XDG_STATE_HOME/legible`, falling back to
 `~/.local/state/legible`. Existing session files remain readable; register their matching checkout
-before requesting worktree cleanup. PR refresh/new review of an already reviewed PR, the folder
-picker, subordinate agents, automatic SSH tunnels, and OS service/autostart installation are not
+before requesting worktree cleanup. The folder picker, code search UI, repository/session management,
+subordinate agents, automatic SSH tunnels, and OS service/autostart installation are not
 implemented yet. No package is published by this implementation.
+
+### Refresh and review again
+
+Use **Check for updates** to compare the pinned HEAD and target branch with GitHub, then **Refresh
+PR** to load the latest entire PR diff. Nothing is polled, and refreshing never calls a model. Stop
+any active turn first; then choose **Review again** or send a message explicitly. The session URL,
+agent settings, drafts, and conversations are retained. Refresh clears obsolete file selections and
+caches while preserving unsent comment/chat text.
+
+Comments move automatically only when their unchanged location can be verified. Edited, deleted,
+ambiguous, or no-longer-visible anchors appear in **Comments needing location review**, not on a
+possibly incorrect line. Choose a new location and confirm it, or delete the draft, before submission.
+After a successful submission and worktree cleanup, **Continue reviewing** opens a fresh draft in
+the same session. Previous receipts, pinned commits, comments, and conversations remain read-only
+history; previously submitted comments are never automatically submitted again.
+
+Refresh prepares a separate worktree generation and saves the session plus chat atomically. If
+preparation or saving fails, the previous review remains intact. Cleanup failures retain the old
+worktree and display a warning; safe retention cleanup can remove it later. Dirty worktrees and
+configuration recovery conflicts are never forcibly overwritten.
 
 ## Daemon lifecycle
 
@@ -158,6 +178,13 @@ screen uses `GET /api/sessions/:sessionId/file?path=...&side=RIGHT` for its whol
 endpoint accepts only paths and sides present in the session diff, so it cannot act as a general
 file browser. Missing tools or authentication place the daemon in degraded mode without preventing
 the status API from starting.
+
+`GET /api/sessions/:sessionId/updates` checks GitHub metadata; `POST .../refresh` verifies fetched
+head/base revisions and updates the session. `POST .../comments/:commentId/reanchor` accepts a new
+path, side, line, and optional same-side range. Session-scoped diff/file/chat/comment/submission and
+refresh requests send `x-legible-review-revision` from the rendered session (missing means legacy
+revision 0). Stale requests receive 409; refetch the session before retrying. MCP leases are likewise
+revision-bound. Session records are now v3 and still read v1/v2 files.
 
 Open `/review/:sessionId` in the web app to view a unified, read-only CodeMirror diff. Changed-file
 navigation, left/right line anchors, whole-file context, loading, empty, binary, and API error states

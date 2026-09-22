@@ -1,6 +1,6 @@
 import type { ReviewSession } from '@legible/protocol'
 
-import type { ChatService } from '../chats/service.js'
+import type { ChatService, PersistedChatState } from '../chats/service.js'
 import type { EventBus } from '../events/event-bus.js'
 import type { SessionRegistry } from './session-registry.js'
 import { SessionStore } from './store.js'
@@ -13,6 +13,7 @@ export class SessionPersistence {
   readonly #unsubscribe: () => void
   readonly #errors = new Map<string, unknown>()
   #restoring = false
+  readonly #suspended = new Set<string>()
 
   constructor(
     private readonly store: SessionStore,
@@ -51,6 +52,7 @@ export class SessionPersistence {
   }
 
   schedule(sessionId: string, delayMs = chatDebounceMs): void {
+    if (this.#suspended.has(sessionId)) return
     this.#cancel(sessionId)
     this.#timers.set(
       sessionId,
@@ -64,6 +66,18 @@ export class SessionPersistence {
   async save(session: ReviewSession): Promise<void> {
     this.#cancel(session.id)
     await this.#enqueueSave(session.id, session)
+    this.#errors.delete(session.id)
+  }
+
+  async suspend(sessionId: string): Promise<() => void> {
+    this.#suspended.add(sessionId)
+    this.#cancel(sessionId)
+    await this.#writes.get(sessionId)?.catch(() => undefined)
+    return () => this.#suspended.delete(sessionId)
+  }
+
+  async saveRevision(session: ReviewSession, chat: PersistedChatState): Promise<void> {
+    await this.#enqueue(session.id, () => this.store.save({ version: 3, session, chat }))
     this.#errors.delete(session.id)
   }
 
@@ -98,7 +112,7 @@ export class SessionPersistence {
       if (!session) return
       const chat = this.chats.exportState(sessionId)
       await this.store.save({
-        version: 2,
+        version: 3,
         session,
         ...(chat ? { chat } : {}),
       })

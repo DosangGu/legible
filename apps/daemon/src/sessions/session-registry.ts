@@ -1,6 +1,8 @@
 import type { ReviewSession } from '@legible/protocol'
 
 import type { EventBus } from '../events/event-bus.js'
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { ServiceError } from '../common/service-error.js'
 
 export class DuplicateSessionError extends Error {
   constructor(id: string) {
@@ -17,6 +19,34 @@ export class SessionNotFoundError extends Error {
 }
 
 export class SessionRegistry {
+  readonly #context = new AsyncLocalStorage<{ id: string; revision: number }>()
+  readonly #refreshing = new Set<string>()
+
+  withRevision<T>(id: string, revision: number, action: () => T): T {
+    return this.#context.run({ id, revision }, action)
+  }
+
+  assertMutable(id: string): void {
+    if (this.#refreshing.has(id))
+      throw new ServiceError(
+        'review_refreshing',
+        'Review is being updated; retry after it finishes',
+        409,
+      )
+    const context = this.#context.getStore()
+    if (context?.id === id && context.revision !== (this.get(id)?.reviewRevision ?? 0))
+      throw new ServiceError(
+        'stale_review_revision',
+        'Review changed. Reload before making changes.',
+        409,
+      )
+  }
+
+  beginRefresh(id: string): () => void {
+    this.assertMutable(id)
+    this.#refreshing.add(id)
+    return () => this.#refreshing.delete(id)
+  }
   readonly #sessions = new Map<string, ReviewSession>()
 
   constructor(private readonly eventBus: EventBus) {}

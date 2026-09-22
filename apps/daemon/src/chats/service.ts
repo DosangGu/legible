@@ -156,7 +156,10 @@ export class ChatService {
     const state = this.#state(session)
     this.#assertAvailable(state)
     if (state.active) throw new ChatBusyError('A chat turn is already active')
-    if (state.snapshot.entries.some((entry) => entry.kind === 'message')) {
+    if (
+      !state.snapshot.reviewPending &&
+      state.snapshot.entries.some((entry) => entry.kind === 'message')
+    ) {
       throw new ChatBusyError('The review has already started')
     }
     return this.#begin(session, state, { kind: 'review' }, initialDisplayMessage)
@@ -192,6 +195,7 @@ export class ChatService {
   }
 
   interrupt(sessionId: string): ChatCommandAccepted {
+    this.options.sessions.assertMutable(sessionId)
     const session = this.#session(sessionId)
     const state = this.#state(session)
     this.#assertAvailable(state)
@@ -225,6 +229,31 @@ export class ChatService {
     })
   }
 
+  async prepareRefresh(sessionId: string, next: ReviewSession): Promise<PersistedChatState> {
+    const snapshot = this.get(sessionId)
+    const state = this.#states.get(sessionId)!
+    if (state.active) throw new ChatBusyError('Stop the active turn before refreshing')
+    await this.#closeAgent(state)
+    snapshot.revision += 1
+    snapshot.status = 'idle'
+    snapshot.reviewPending = true
+    delete snapshot.currentTurnId
+    delete snapshot.currentItemId
+    delete snapshot.retryItemId
+    delete snapshot.unavailableReason
+    snapshot.entries.push({
+      id: this.#idFactory(),
+      turnId: this.#idFactory(),
+      kind: 'notice',
+      createdAt: this.#now().toISOString(),
+      level: 'info',
+      retryable: false,
+      scope: 'session',
+      message: `Review revision ${String(next.reviewRevision)}: ${next.baseSha}…${next.headSha}. Earlier messages describe previous revisions. Review the entire updated PR diff; no agent has been started.`,
+    })
+    return { snapshot }
+  }
+
   async close(): Promise<void> {
     this.#closed = true
     this.#unsubscribe()
@@ -244,6 +273,7 @@ export class ChatService {
     request: PersistedChatRequest,
     displayMessage?: string,
   ): ChatCommandAccepted {
+    this.options.sessions.assertMutable(session.id)
     if (this.#closed) throw new ChatUnavailableError('Legible is stopping')
     this.options.assertBackendReady?.(session.config.main.backend)
     const turnId = this.#idFactory()
@@ -373,22 +403,35 @@ export class ChatService {
     recovering: boolean,
     bootstrapping: boolean,
   ): Promise<string> {
-    const requested =
+    let requested =
       request.kind === 'review'
         ? buildReviewPrompt(session, renderDiff(await this.options.diffs.get(session)))
         : request.itemId
           ? buildItemPrompt(session, request.itemId, request.message)
           : request.message
+    if (
+      (state.snapshot.reviewPending || (recovering && (session.reviewRevision ?? 0) > 0)) &&
+      request.kind === 'message'
+    ) {
+      requested = `${buildReviewPrompt(session, renderDiff(await this.options.diffs.get(session)))}\n\nCurrent request:\n${requested}`
+    }
+    state.snapshot.reviewPending = false
     if (bootstrapping && request.kind === 'message' && request.itemId) {
       const review = buildReviewPrompt(session, renderDiff(await this.options.diffs.get(session)))
       return `${review}\n\nCOMMENT DISCUSSION\n${requested}`
     }
     if (!recovering) return requested
     const transcript = state.snapshot.entries
-      .filter((entry) => entry.kind === 'message')
-      .map(
+      .filter(
         (entry) =>
-          `${entry.role === 'user' ? 'User' : 'Assistant'}${entry.itemId ? ` ${itemLabel(session, entry.itemId)}` : ' [main]'}: ${entry.text}`,
+          entry.kind === 'message' || (entry.kind === 'notice' && entry.scope === 'session'),
+      )
+      .map((entry) =>
+        entry.kind === 'notice'
+          ? `Revision notice: ${entry.message}`
+          : entry.kind === 'message'
+            ? `${entry.role === 'user' ? 'User' : 'Assistant'}${entry.itemId ? ` ${itemLabel(session, entry.itemId)}` : ' [main]'}: ${entry.text}`
+            : '',
       )
       .join('\n\n')
     return `A previous ephemeral review thread was lost. Restore context from this transcript, then answer the final request.\n\n${transcript}\n\nFinal request:\n${requested}`
@@ -764,12 +807,19 @@ function buildReviewPrompt(session: ReviewSession, diff: string): string {
 function buildItemPrompt(session: ReviewSession, itemId: string, message: string): string {
   const comment = session.comments.find((candidate) => candidate.id === itemId)
   if (!comment) throw new ChatItemNotFoundError('Draft comment chat item not found')
-  return `${itemLabel(session, itemId)}\nBEGIN UNTRUSTED DRAFT COMMENT\n${comment.body}\nEND UNTRUSTED DRAFT COMMENT\nRequest: ${message}`
+  return `${itemLabel(session, itemId)}\n${comment.anchorStatus === 'needs_review' ? 'This anchor belongs to an older revision and requires human reanchoring. Do not interpret its line as a current location.\n' : ''}BEGIN UNTRUSTED DRAFT COMMENT\n${comment.body}\nEND UNTRUSTED DRAFT COMMENT\nRequest: ${message}`
 }
 
 function itemLabel(session: ReviewSession, itemId: string): string {
   const index = session.comments.findIndex((comment) => comment.id === itemId)
-  if (index < 0) return `[deleted comment ${itemId}]`
+  if (index < 0) {
+    const record = session.submissionHistory?.find((entry) =>
+      entry.comments.some((comment) => comment.id === itemId),
+    )
+    return record
+      ? `[submitted comment ${itemId}, read-only revision ${String(record.reviewRevision)}]`
+      : `[deleted comment ${itemId}]`
+  }
   const comment = session.comments[index]!
   const range =
     comment.startLine === undefined

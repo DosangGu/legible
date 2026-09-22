@@ -1,4 +1,5 @@
 import type { ReviewSession, ReviewSubmission, SubmitReviewRequest } from '@legible/protocol'
+import { randomUUID } from 'node:crypto'
 
 import type { ChatService } from '../chats/service.js'
 import type { CommentService } from '../comments/service.js'
@@ -56,10 +57,14 @@ export class SubmissionService {
         throw new StaleHeadError(session.headSha, currentHeadSha)
       }
       for (const comment of session.comments) {
+        if (comment.anchorStatus === 'needs_review')
+          throw new InvalidSubmissionError(
+            'Reconnect or remove every comment needing a location check before submitting',
+          )
         await this.comments.validateAnchor(session, comment)
       }
 
-      const marker = `<!-- legible-review-session:${session.id} -->`
+      const marker = `<!-- legible-review-session:${session.id}:${randomUUID()} -->`
       const startedAt = this.now().toISOString()
       const submission: ReviewSubmission = {
         status: 'submitting',
@@ -190,6 +195,7 @@ export class SubmissionService {
   }
 
   #session(sessionId: string): ReviewSession {
+    this.sessions.assertMutable(sessionId)
     const session = this.sessions.get(sessionId)
     if (!session) throw new SubmissionSessionNotFoundError('Review session not found')
     return session

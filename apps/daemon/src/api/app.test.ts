@@ -24,6 +24,26 @@ afterEach(async () => {
 })
 
 describe('daemon API', () => {
+  it('rejects old MCP leases after a revision switch even when the caller retains its token', async () => {
+    const runtime = await makeRuntime(new ReadyCommandRunner(), diffSourceFrom(exampleDiff))
+    const session = reviewSession({ baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40) })
+    runtime.services.sessions.add(session)
+    const lease = runtime.services.mcp.open(session.id, AgentBackendKind.Claude)
+    const authorization = lease.spec.transport === 'http' ? lease.spec.headers?.Authorization : ''
+    runtime.services.sessions.replace({ ...session, reviewRevision: 1 })
+    const result = await inject(runtime, {
+      method: 'POST',
+      url: `/api/sessions/${session.id}/mcp`,
+      headers: mcpHeaders(authorization),
+      payload: mcpCall(1, 'tools/call', {
+        name: 'add_comment',
+        arguments: { path: 'src/a.ts', side: 'RIGHT', line: 2, body: 'Obsolete' },
+      }),
+    })
+    expect(mcpResult(result.body)).toMatchObject({ isError: true })
+    expect(runtime.services.sessions.get(session.id)?.comments).toEqual([])
+    await lease.close()
+  })
   it('exposes health, preflight, sessions, and stable errors', async () => {
     const runtime = await makeRuntime()
 
@@ -565,7 +585,9 @@ describe('daemon API', () => {
     })
     expect(submitted).toMatchObject({
       commitId: 'b'.repeat(40),
-      body: 'Summary\n\n<!-- legible-review-session:session-1 -->',
+      body: expect.stringMatching(
+        /^Summary\n\n<!-- legible-review-session:session-1:[a-f0-9-]+ -->$/u,
+      ),
     })
   })
 })

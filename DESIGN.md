@@ -231,7 +231,40 @@ Never make the agent compute `position`. It reports a path and a real line numbe
 
 No automatic detection. **Display it** in the UI — the user needs some way to notice.
 
-Provide a command for when they do notice: refresh the worktree to the latest head and tell the agent that the PR was updated and new commits should be reviewed.
+Provide explicit update-check and refresh commands. Refresh keeps the session ID, configuration,
+drafts, and conversation while preparing a separate UUID-suffixed worktree generation. Verify both
+GitHub head and target-branch tip against fetched refs; pin their merge-base for the **whole latest
+PR diff**, not just newly added commits. A target-tip change without an effective head/merge-base
+change is a no-op for draft revisions. Legacy sessions with no saved target tip report unknown base
+change until refresh verifies it.
+
+Serialize refresh with comment/submission mutations; refuse active agents, unresolved submissions,
+and submitted sessions whose worktree cleanup is incomplete. Close the idle agent and its MCP lease,
+restore projected configuration, prepare comment mapping and a revision-boundary chat notice, then
+atomically save the next session and chat as one v3 record before publishing. Read v1/v2 records as
+legacy revision 0. Failed preparation/save preserves the previous revision and removes only the
+candidate generation. Remove the previous worktree after commit; cleanup failure is a warning and
+leaves the old generation for safe retention cleanup. Never reset or force-remove a dirty worktree.
+
+Increment `reviewRevision` for each effective refresh or submitted-session continuation. Browser
+requests carry `x-legible-review-revision` (absent means 0); MCP tools capture it in their lease.
+Recheck queued mutations against the current revision. Reject stale requests and requests during
+preparation with 409. Keep chat stream revisions monotonic. The browser reloads on revision events,
+invalidates file caches and anchors, ignores obsolete responses, and preserves unsent text. Empty
+diffs still expose conversation, refresh, submission, and history controls.
+
+Map LEFT anchors through old/new base trees and RIGHT anchors through old/new head trees. Preserve
+exact unchanged blobs and unique exact-content renames; for changed files, accept only untouched
+ranges with unique matching context and validate against the new full diff. Keep uncertain anchors
+as `needs_review` with their original location/revision, outside the inline diff. Submission blocks
+until a human reanchors or removes them. Reanchoring retains the comment ID and conversation.
+
+Refreshing never starts an agent. Explicit **Review again** or the next user message starts a new
+read-only agent on the latest whole diff, with prior transcript and revision boundaries. Old retry
+requests are discarded. After successful submission and cleanup, **Continue reviewing** archives
+the receipt, pinned commits, and comments as read-only history and clears the current draft in the
+same session. Submitted comment conversations are read-only. Every submission attempt has a unique
+hidden marker, while reconciliation continues to honor exact legacy persisted markers.
 
 Since submission sends the whole array, **a single stale anchor can fail the entire request with a 422.**
 
@@ -555,8 +588,9 @@ sandbox. Model and effort remain free-form. Preparing a session never starts an 
 Serialize session creation by repository/PR, and Git operations by common Git directory. Fetch into
 dedicated refs without changing FETCH_HEAD, verify the advertised head/base, and pin merge-base.
 Persist before publishing the new session. Reopening preserves the existing pinned review and updates
-its last-opened timestamp; submitted sessions open their receipt. Head refresh and repeat reviews are
-deferred. Multi-repository cleanup resolves and validates the session's exact registered worktree.
+its last-opened timestamp; submitted sessions open their receipt. Explicit refresh and continuation
+are described above. Multi-repository cleanup resolves and validates the session's exact registered
+worktree, including its generation suffix.
 
 From the second run onward, **recent items are the first screen.** Design the empty state and the everyday state separately.
 
@@ -675,7 +709,8 @@ Riskiest first. **Follow the order.**
 | 8D | Subordinate mode (deferred) | Explicitly excluded from the current implementation |
 | 9A | Web entry flow | Path registration, multi-repo PR preparation, agent selection, recent reviews, local browser auth |
 | 9B | CLI lifecycle | Background attach/start, singleton ownership, browser handoff, status/idle stop; Unix/WSL |
-| Later | Entry and review follow-ups | Directory picker, PR refresh/re-review, native Windows, packaging, remote binding separately |
+| 9C | Same-session refresh/re-review | Whole latest PR diff, conservative anchors, revision guards, submitted history |
+| Later | Entry and review follow-ups | Code search UI, repository/session management, directory picker, native Windows, packaging, remote binding separately |
 
 **Step 3 will take twice as long as expected.** A diff viewer with inline widgets is universally underestimated until you build one. If it stalls, dropping side-by-side and shipping unified only is the escape hatch.
 

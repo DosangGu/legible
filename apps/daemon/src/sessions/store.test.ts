@@ -15,7 +15,7 @@ describe('SessionStore', () => {
 
     await store.save({ version: 2, session })
 
-    await expect(store.loadAll()).resolves.toEqual([{ version: 2, session }])
+    await expect(store.loadAll()).resolves.toEqual([{ version: 3, session }])
     expect((await stat(dirname(store.pathFor(session.id)))).mode & 0o777).toBe(0o700)
     expect((await stat(store.pathFor(session.id))).mode & 0o777).toBe(0o600)
   })
@@ -30,7 +30,7 @@ describe('SessionStore', () => {
     await expect(store.loadAll()).rejects.toThrow(store.pathFor('session-1'))
   })
 
-  it('loads version 1 records as version 2 drafts', async () => {
+  it('loads version 1 records as version 3 drafts', async () => {
     const root = await mkdtemp(join(tmpdir(), 'legible-store-'))
     const store = new SessionStore(root)
     const session = reviewSession()
@@ -41,6 +41,6 @@ describe('SessionStore', () => {
       'utf8',
     )
 
-    await expect(store.loadAll()).resolves.toEqual([{ version: 2, session }])
+    await expect(store.loadAll()).resolves.toEqual([{ version: 3, session }])
   })
 })

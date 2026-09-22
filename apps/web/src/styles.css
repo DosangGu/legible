@@ -428,13 +428,15 @@ button {
 }
 
 .review-shell {
-  display: grid;
-  grid-template-rows: 58px minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   height: 100%;
   background: var(--surface-0);
 }
 
 .review-header {
+  min-height: 58px;
+  flex-shrink: 0;
   display: grid;
   grid-template-columns: minmax(220px, 1fr) minmax(280px, 2fr) auto;
   align-items: center;
@@ -512,6 +514,7 @@ button {
 }
 
 .review-body {
+  flex: 1;
   display: grid;
   min-height: 0;
   grid-template-columns: 280px minmax(0, 1fr) 360px;
@@ -1258,4 +1261,81 @@ button {
   .cm-editor .cm-gutterElement {
     min-width: 38px;
   }
+}
+.refresh-status,
+.pending-comments,
+.submission-history {
+  flex-shrink: 0;
+  padding: 12px 20px;
+  border-bottom: 1px solid #d5dce5;
+  overflow-wrap: anywhere;
+}
+.refresh-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.pending-comments {
+  background: #302a1a;
+  color: #f1d58c;
+  max-height: 240px;
+  overflow: auto;
+}
+.pending-comments button,
+.submission-history button {
+  margin: 4px 8px 4px 0;
+}
+.submission-history[open] {
+  max-height: 320px;
+  overflow: auto;
+}
+
+.receipt-chat {
+  width: min(680px, 90vw);
+  height: 420px;
+  text-align: left;
+}
+.receipt-chat .chat-panel {
+  height: 100%;
+}
+
+.refresh-status,
+.submission-history {
+  font-size: 13px;
+  border-color: var(--border);
+}
+.refresh-status button,
+.pending-comments button,
+.submission-history button,
+.placeholder-page > button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: var(--bright);
+  background: var(--surface-2);
+  cursor: pointer;
+}
+.refresh-status button:disabled,
+.pending-comments button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.refresh-status textarea {
+  color: var(--bright);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  min-width: 260px;
+}
+.submission-history a {
+  color: var(--accent);
+}
+.submission-history section + section {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.submission-history p {
+  white-space: pre-wrap;
 }

@@ -14,6 +14,8 @@ import type {
   CreateSessionRequest,
   CreateSessionResponse,
   PreflightReport,
+  ReviewUpdate,
+  RefreshReviewResponse,
 } from '@legible/protocol'
 
 export class ApiClientError extends Error {
@@ -37,32 +39,36 @@ export function fetchSession(sessionId: string, signal?: AbortSignal): Promise<R
 export function submitReview(
   sessionId: string,
   submission: SubmitReviewRequest,
+  revision = 0,
 ): Promise<ReviewSession> {
   return request<ReviewSession>(`/api/sessions/${encodeURIComponent(sessionId)}/submission`, {
     method: 'POST',
     body: JSON.stringify(submission),
+    headers: revisionHeaders(revision),
   })
 }
 
-export function reconcileSubmission(sessionId: string): Promise<ReviewSession> {
+export function reconcileSubmission(sessionId: string, revision = 0): Promise<ReviewSession> {
   return request<ReviewSession>(
     `/api/sessions/${encodeURIComponent(sessionId)}/submission/reconcile`,
-    { method: 'POST' },
+    { method: 'POST', headers: revisionHeaders(revision) },
   )
 }
 
-export function cleanupSubmission(sessionId: string): Promise<ReviewSession> {
+export function cleanupSubmission(sessionId: string, revision = 0): Promise<ReviewSession> {
   return request<ReviewSession>(
     `/api/sessions/${encodeURIComponent(sessionId)}/submission/cleanup`,
-    { method: 'POST' },
+    { method: 'POST', headers: revisionHeaders(revision) },
   )
 }
 
 export async function fetchSessionDiff(
   sessionId: string,
   signal?: AbortSignal,
+  revision = 0,
 ): Promise<DiffDocument> {
   return request<DiffDocument>(`/api/sessions/${encodeURIComponent(sessionId)}/diff`, {
+    headers: revisionHeaders(revision),
     ...(signal ? { signal } : {}),
   })
 }
@@ -72,42 +78,54 @@ export async function fetchReviewFile(
   path: string,
   side: DiffSide,
   signal?: AbortSignal,
+  revision = 0,
 ): Promise<ReviewFileContent> {
   const query = new URLSearchParams({ path, side })
   return request<ReviewFileContent>(
     `/api/sessions/${encodeURIComponent(sessionId)}/file?${query.toString()}`,
-    { ...(signal ? { signal } : {}) },
+    { ...(signal ? { signal } : {}), headers: revisionHeaders(revision) },
   )
 }
 
-export function fetchChat(sessionId: string, signal?: AbortSignal): Promise<ChatSnapshot> {
+export function fetchChat(
+  sessionId: string,
+  signal?: AbortSignal,
+  revision = 0,
+): Promise<ChatSnapshot> {
   return request<ChatSnapshot>(`/api/sessions/${encodeURIComponent(sessionId)}/chat`, {
+    headers: revisionHeaders(revision),
     ...(signal ? { signal } : {}),
   })
 }
 
-export function startReview(sessionId: string): Promise<ChatCommandAccepted> {
-  return chatCommand(sessionId, 'start')
+export function startReview(sessionId: string, revision = 0): Promise<ChatCommandAccepted> {
+  return chatCommand(sessionId, 'start', undefined, revision)
 }
 
 export function sendChatMessage(
   sessionId: string,
   message: string,
   itemId?: string,
+  revision = 0,
 ): Promise<ChatCommandAccepted> {
-  return chatCommand(sessionId, 'messages', { message, ...(itemId ? { itemId } : {}) })
+  return chatCommand(sessionId, 'messages', { message, ...(itemId ? { itemId } : {}) }, revision)
 }
 
-export function interruptChat(sessionId: string): Promise<ChatCommandAccepted> {
-  return chatCommand(sessionId, 'interrupt')
+export function interruptChat(sessionId: string, revision = 0): Promise<ChatCommandAccepted> {
+  return chatCommand(sessionId, 'interrupt', undefined, revision)
 }
 
-export function retryChat(sessionId: string): Promise<ChatCommandAccepted> {
-  return chatCommand(sessionId, 'retry')
+export function retryChat(sessionId: string, revision = 0): Promise<ChatCommandAccepted> {
+  return chatCommand(sessionId, 'retry', undefined, revision)
 }
 
-export function fetchComments(sessionId: string, signal?: AbortSignal): Promise<DraftComment[]> {
+export function fetchComments(
+  sessionId: string,
+  signal?: AbortSignal,
+  revision = 0,
+): Promise<DraftComment[]> {
   return request<DraftComment[]>(`/api/sessions/${encodeURIComponent(sessionId)}/comments`, {
+    headers: revisionHeaders(revision),
     ...(signal ? { signal } : {}),
   })
 }
@@ -115,10 +133,12 @@ export function fetchComments(sessionId: string, signal?: AbortSignal): Promise<
 export function createComment(
   sessionId: string,
   comment: CreateDraftCommentRequest,
+  revision = 0,
 ): Promise<DraftComment> {
   return request<DraftComment>(`/api/sessions/${encodeURIComponent(sessionId)}/comments`, {
     method: 'POST',
     body: JSON.stringify(comment),
+    headers: revisionHeaders(revision),
   })
 }
 
@@ -126,17 +146,22 @@ export function updateComment(
   sessionId: string,
   commentId: string,
   body: string,
+  revision = 0,
 ): Promise<DraftComment> {
   return request<DraftComment>(
     `/api/sessions/${encodeURIComponent(sessionId)}/comments/${encodeURIComponent(commentId)}`,
-    { method: 'PATCH', body: JSON.stringify({ body }) },
+    { method: 'PATCH', body: JSON.stringify({ body }), headers: revisionHeaders(revision) },
   )
 }
 
-export async function deleteComment(sessionId: string, commentId: string): Promise<void> {
+export async function deleteComment(
+  sessionId: string,
+  commentId: string,
+  revision = 0,
+): Promise<void> {
   await request<void>(
     `/api/sessions/${encodeURIComponent(sessionId)}/comments/${encodeURIComponent(commentId)}`,
-    { method: 'DELETE' },
+    { method: 'DELETE', headers: revisionHeaders(revision) },
   )
 }
 
@@ -144,11 +169,13 @@ function chatCommand(
   sessionId: string,
   action: string,
   body?: unknown,
+  revision = 0,
 ): Promise<ChatCommandAccepted> {
   return request<ChatCommandAccepted>(
     `/api/sessions/${encodeURIComponent(sessionId)}/chat/${action}`,
     {
       method: 'POST',
+      headers: revisionHeaders(revision),
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     },
   )
@@ -156,6 +183,32 @@ function chatCommand(
 
 export function fetchRepos(signal?: AbortSignal): Promise<Repo[]> {
   return request('/api/repos', signal ? { signal } : {})
+}
+
+export function checkReviewUpdates(session: ReviewSession): Promise<ReviewUpdate> {
+  return request(`/api/sessions/${encodeURIComponent(session.id)}/updates`, {
+    headers: revisionHeaders(session.reviewRevision ?? 0),
+  })
+}
+export function refreshReview(session: ReviewSession): Promise<RefreshReviewResponse> {
+  return request(`/api/sessions/${encodeURIComponent(session.id)}/refresh`, {
+    method: 'POST',
+    headers: revisionHeaders(session.reviewRevision ?? 0),
+  })
+}
+export function reanchorComment(
+  sessionId: string,
+  id: string,
+  anchor: Omit<CreateDraftCommentRequest, 'body'>,
+  revision = 0,
+): Promise<DraftComment> {
+  return request(
+    `/api/sessions/${encodeURIComponent(sessionId)}/comments/${encodeURIComponent(id)}/reanchor`,
+    { method: 'POST', body: JSON.stringify(anchor), headers: revisionHeaders(revision) },
+  )
+}
+function revisionHeaders(revision: number) {
+  return { 'x-legible-review-revision': String(revision) }
 }
 export function registerRepo(path: string): Promise<Repo> {
   return request('/api/repos', { method: 'POST', body: JSON.stringify({ path }) })

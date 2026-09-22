@@ -66,7 +66,8 @@ export class ReviewMcpServer implements McpServerProvider {
   open(sessionId: string, origin: AgentBackendKind): McpServerLease {
     if (!this.options.sessions.get(sessionId)) throw new Error('Review session not found')
     const token = this.#tokenFactory()
-    const handler = createMcpHandler(() => this.#createToolServer(sessionId, origin))
+    const revision = this.options.sessions.get(sessionId)?.reviewRevision ?? 0
+    const handler = createMcpHandler(() => this.#createToolServer(sessionId, origin, revision))
     const nodeHandler = toNodeHandler(handler)
     const record: LeaseRecord = {
       sessionId,
@@ -125,7 +126,14 @@ export class ReviewMcpServer implements McpServerProvider {
     await Promise.allSettled(handlers.map((handler) => handler.close()))
   }
 
-  #createToolServer(sessionId: string, origin: AgentBackendKind): McpServer {
+  #createToolServer(sessionId: string, origin: AgentBackendKind, revision: number): McpServer {
+    const toolResult = (operation: () => Promise<Record<string, unknown>>) =>
+      this.options.sessions.withRevision(sessionId, revision, () =>
+        guardedToolResult(async () => {
+          this.options.sessions.assertMutable(sessionId)
+          return operation()
+        }),
+      )
     const server = new McpServer({ name: legibleMcpServerName, version: '0.0.0' })
     const anchorSchema = {
       path: z.string().min(1),
@@ -239,6 +247,7 @@ export class ReviewMcpServer implements McpServerProvider {
             side: input.side,
             ...(range.startLine === undefined ? {} : { startLine: range.startLine }),
           }
+          this.options.sessions.assertMutable(sessionId)
           this.options.eventBus.publish({ type: 'review.focus.requested', payload })
           return { focus: payload }
         }),
@@ -248,7 +257,7 @@ export class ReviewMcpServer implements McpServerProvider {
   }
 }
 
-async function toolResult(
+async function guardedToolResult(
   operation: () => Promise<Record<string, unknown>>,
 ): Promise<CallToolResult> {
   try {
