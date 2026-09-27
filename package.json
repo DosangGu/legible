@@ -16,7 +16,7 @@
     "dev": "concurrently --kill-others-on-fail --names protocol,daemon,web --prefix-colors blue,magenta,green \"npm run dev --workspace @legible/protocol\" \"npm run dev --workspace @legible/daemon\" \"npm run dev --workspace @legible/web\"",
     "build": "npm run build --workspace @legible/protocol && npm run build --workspace @legible/daemon && npm run build --workspace @legible/web && npm run stage:web --workspace @legible/daemon",
     "pack:local": "npm run build && node scripts/stage-package.mjs && npm pack ./dist/package --pack-destination ./dist",
-    "test": "vitest run --passWithNoTests",
+    "test": "npm run build --workspace @legible/protocol && vitest run --passWithNoTests",
     "test:cli": "LEGIBLE_BUILT_CLI_TEST=1 vitest run apps/daemon/src/cli/built.test.ts",
     "test:package": "npm run build && node scripts/stage-package.mjs && LEGIBLE_PACKAGE_TEST=1 vitest run apps/daemon/src/cli/package.test.ts",
     "lint": "eslint . --max-warnings 0",

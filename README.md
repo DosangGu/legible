@@ -19,7 +19,7 @@ The repository is an npm workspace with separate browser, daemon, and shared-cod
 | ---------------- | --------------------------------------------------------------------- |
 | `npm run dev`    | Watch protocol types and the daemon while running the Vite dev server |
 | `npm run build`  | Build protocol, daemon, and web workspaces in dependency order        |
-| `npm test`       | Run the Vitest suite                                                  |
+| `npm test`       | Build the shared protocol, then run the Vitest suite                  |
 | `npm run lint`   | Run ESLint with warnings treated as errors                            |
 | `npm run format` | Format supported files with Prettier                                  |
 | `npm run check`  | Run formatting, linting, tests, and the production build              |
