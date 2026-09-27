@@ -41,11 +41,9 @@ async function launch(directory: string): Promise<ChildProcess> {
     throw new Error('Build Legible first with npm run build')
   })
   if (!process.env.LEGIBLE_WEB_ORIGIN)
-    await access(fileURLToPath(new URL('../../../web/dist/index.html', import.meta.url))).catch(
-      () => {
-        throw new Error('Build the web app first with npm run build')
-      },
-    )
+    await access(fileURLToPath(new URL('../web/index.html', import.meta.url))).catch(() => {
+      throw new Error('Build the web app first with npm run build')
+    })
   await privateDirectory(directory)
   const log = await open(
     join(directory, 'daemon.log'),

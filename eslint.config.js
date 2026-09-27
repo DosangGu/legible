@@ -12,7 +12,12 @@ export default tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ['apps/daemon/**/*.{ts,tsx}', 'packages/**/*.{ts,tsx}', '*.config.{js,ts}'],
+    files: [
+      'apps/daemon/**/*.{ts,tsx}',
+      'packages/**/*.{ts,tsx}',
+      'scripts/**/*.mjs',
+      '*.config.{js,ts}',
+    ],
     languageOptions: {
       globals: globals.node,
     },

@@ -162,8 +162,7 @@ export async function startDaemon(options: StartDaemonOptions): Promise<DaemonRu
     throw new Error('Only loopback binding is supported; use an SSH tunnel for remote access')
   const { runtime, initialize } = await configureDaemon({
     ...options,
-    webDirectory:
-      options.webDirectory ?? fileURLToPath(new URL('../../web/dist/', import.meta.url)),
+    webDirectory: options.webDirectory ?? fileURLToPath(new URL('./web/', import.meta.url)),
   })
   try {
     await runtime.app.listen({

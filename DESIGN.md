@@ -800,6 +800,11 @@ session lifecycle has settled.
 
 Users type `legible`.
 
+The local distribution smoke build stages one private package under `dist/package`: compiled daemon
+and web assets, plus a bundled copy of the browser-safe protocol package. It does not publish to
+npm or select a public release scope. An isolated tarball-install test checks the CLI, daemon
+startup, and static assets before any release work.
+
 ### Casing
 
 Lowercase `legible` for identifiers — CLI command, npm package, repo name, paths. Capitalized `Legible` for prose — README headings, documentation, "Legible runs as a local daemon." Same convention as ripgrep/`rg` and Vite/`vite`.

@@ -38,6 +38,11 @@ npm run legible -- pr 123
 The daemon workspace exposes a `legible` bin; the root npm script runs it without a global install.
 If you want the bare command on your PATH, build first and explicitly link the daemon workspace
 with npm; Legible does not install a global command automatically.
+For a disposable, installable local tarball, run `npm run pack:local`. It creates
+`dist/legible-legible-<version>.tgz` with the CLI, daemon, web assets, and bundled protocol; the
+remaining runtime dependencies are installed by npm. `npm run test:package` packs that build,
+installs it in a temporary directory, starts the daemon, checks the web assets, and stops it.
+The package is private and is not published; choose a release scope before publishing.
 The CLI starts one background daemon if needed, then exits. In a supported checkout it registers the
 current repository; outside a checkout it warns and still opens the home screen. Local interactive
 runs open the browser automatically; SSH, CI, and non-interactive runs only print the URL. Override
