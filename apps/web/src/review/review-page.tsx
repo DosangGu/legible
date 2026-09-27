@@ -19,6 +19,7 @@ import {
   submitReview,
   checkReviewUpdates,
   refreshReview,
+  touchSession,
 } from '../api.js'
 import { useDaemonEvents } from '../events-context.js'
 import { CodeView, type InlineWidget, type ScrollRequest } from './code-view.js'
@@ -51,6 +52,7 @@ export function ReviewPage() {
     let controller = new AbortController()
     let pinnedRevision: number | undefined
     let submitted = false
+    let archived = false
     const load = () => {
       controller.abort()
       const current = new AbortController()
@@ -58,7 +60,7 @@ export function ReviewPage() {
       void fetchSession(sessionId, current.signal)
         .then(async (session) => ({
           session,
-          ...(session.submission
+          ...(session.submission || session.archivedAt
             ? {}
             : {
                 diff: await fetchSessionDiff(
@@ -74,6 +76,7 @@ export function ReviewPage() {
               setLoadWarning(undefined)
               pinnedRevision = session.reviewRevision ?? 0
               submitted = Boolean(session.submission)
+              archived = Boolean(session.archivedAt)
               setLoadedDiff({
                 key: requestKey,
                 status: 'ready',
@@ -100,7 +103,8 @@ export function ReviewPage() {
       if (event.type === 'session.updated' && event.payload.id === sessionId) {
         if (
           (event.payload.reviewRevision ?? 0) !== pinnedRevision ||
-          Boolean(event.payload.submission) !== submitted
+          Boolean(event.payload.submission) !== submitted ||
+          Boolean(event.payload.archivedAt) !== archived
         )
           load()
         else
@@ -130,6 +134,14 @@ export function ReviewPage() {
           Retry
         </button>
       </PageState>
+    )
+  }
+  if (diffState.session.archivedAt) {
+    return (
+      <ArchivedReview
+        session={diffState.session}
+        onRestored={() => setRetry((value) => value + 1)}
+      />
     )
   }
   if (diffState.session.submission) {
@@ -162,6 +174,39 @@ export function ReviewPage() {
         }}
       />
     </>
+  )
+}
+
+function ArchivedReview({ session, onRestored }: { session: ReviewSession; onRestored(): void }) {
+  const [busy, setBusy] = useState(false)
+  const [failure, setFailure] = useState('')
+  const restore = async () => {
+    setBusy(true)
+    setFailure('')
+    try {
+      await touchSession(session.id)
+      onRestored()
+    } catch (error) {
+      setFailure(errorMessage(error))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <PageState
+      title="Archived review"
+      detail="Your comments, conversation, and submission history are saved. Restore to continue; no agent will start automatically."
+    >
+      {failure && <p role="alert">{failure}</p>}
+      <button
+        type="button"
+        className="primary-button"
+        disabled={busy}
+        onClick={() => void restore()}
+      >
+        {busy ? 'Restoring…' : 'Restore review'}
+      </button>
+    </PageState>
   )
 }
 

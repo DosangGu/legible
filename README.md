@@ -89,11 +89,31 @@ repositories, credential-bearing remote URLs, and GitHub Enterprise origins are 
 this release. Multiple clones of the same repository are remembered, but the first remains primary.
 If it moves or disappears, restore that checkout; Legible will not silently switch clones.
 
+Use **Manage checkouts** on the workspace home screen to inspect registered paths, choose a primary,
+or forget a non-primary registration. These actions never delete local checkout files. A primary
+change requires a valid matching GitHub origin, no saved sessions (including archived sessions), and
+no linked worktrees in the old primary. An unavailable primary must be restored before switching.
+The primary itself cannot be forgotten; choose another primary first. Registry updates and review
+preparation are serialized so an in-flight review cannot lose its checkout.
+
 The registry and sessions are saved under `$XDG_STATE_HOME/legible`, falling back to
 `~/.local/state/legible`. Existing session files remain readable; register their matching checkout
-before requesting worktree cleanup. The folder picker, repository/session management,
+before requesting worktree cleanup. The folder picker, permanent repository/session deletion,
 subordinate agents, automatic SSH tunnels, and OS service/autostart installation are not
 implemented yet. No package is published by this implementation.
+
+### Saved review management
+
+Recent reviews can be filtered by repository and by draft, submitted, pending/uncertain submission,
+or archived state. Archived reviews are hidden by default. **Archive** preserves pinned commits,
+comments, conversation, submission receipts/history, and worktrees; it does not reclaim disk space.
+Active agent turns, refreshes, pending mutations, unresolved submissions, and incomplete cleanup
+block archiving. Archived sessions reject review operations until restored.
+
+Use **Restore**, or open an archived item to restore and reopen the same session. A direct archived
+review URL shows a restore screen first. Restoring never fetches new commits or starts an agent.
+Visibility is saved before broadcasting updates and survives restarts; old session records without
+`archivedAt` remain active. No permanent deletion or additional automatic cleanup is introduced.
 
 ### Refresh and review again
 
@@ -212,6 +232,12 @@ and truncation/skipped-file information. `GET .../search/file?path=...` opens a 
 blob, including files outside the diff. Both use the same browser authentication and review revision
 header; neither accepts a caller-provided SHA or filesystem root. The existing `/file` endpoint and
 comment validation remain diff-restricted. HTTP cancellation stops the active search Git process.
+
+`POST /api/sessions/:sessionId/archive` accepts `{ "archived": true | false }` and requires the
+rendered review revision. `/open` also restores archived sessions. Lists and snapshots include archived
+records so clients can filter them. `GET /api/repos/:owner/:name/checkouts` reports validated path
+availability and dependency restrictions; `PATCH .../primary` and `DELETE .../checkouts` take an exact
+registered `{ "path": "..." }`. All management routes require the existing browser authentication.
 
 Open `/review/:sessionId` in the web app to view a unified, read-only CodeMirror diff. Changed-file
 navigation, left/right line anchors, whole-file context, loading, empty, binary, and API error states

@@ -77,20 +77,22 @@ export class WorktreeManager implements ReviewWorktrees {
   }
 
   async #withRepo<T>(id: string, run: (service: WorktreeService) => Promise<T>): Promise<T> {
-    const { commonDirectory } = await this.repos.checkout(id)
-    return this.#locks.run(commonDirectory, async () => {
-      const checked = await this.repos.checkout(id)
-      if (checked.commonDirectory !== commonDirectory)
-        throw new ServiceError('repo_changed', 'Repository changed during preparation', 409)
-      return run(
-        new WorktreeService({
-          repoPath: checked.repo.primaryCheckout,
-          repoId: checked.repo.id,
-          runner: this.runner,
-          stateDirectory: this.#stateDirectory,
-          ...this.options,
-        }),
-      )
+    return this.repos.withLock(async () => {
+      const { commonDirectory } = await this.repos.checkout(id)
+      return this.#locks.run(commonDirectory, async () => {
+        const checked = await this.repos.checkout(id)
+        if (checked.commonDirectory !== commonDirectory)
+          throw new ServiceError('repo_changed', 'Repository changed during preparation', 409)
+        return run(
+          new WorktreeService({
+            repoPath: checked.repo.primaryCheckout,
+            repoId: checked.repo.id,
+            runner: this.runner,
+            stateDirectory: this.#stateDirectory,
+            ...this.options,
+          }),
+        )
+      })
     })
   }
 }

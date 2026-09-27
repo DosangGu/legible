@@ -108,6 +108,8 @@ function isReviewSession(value: unknown): value is ReviewSession {
     typeof value.baseSha === 'string' &&
     typeof value.worktreePath === 'string' &&
     typeof value.createdAt === 'string' &&
+    (value.archivedAt === undefined ||
+      (typeof value.archivedAt === 'string' && Number.isFinite(Date.parse(value.archivedAt)))) &&
     (value.reviewRevision === undefined || isRevision(value.reviewRevision)) &&
     (value.baseTipSha === undefined || typeof value.baseTipSha === 'string') &&
     (value.baseRef === undefined || typeof value.baseRef === 'string') &&

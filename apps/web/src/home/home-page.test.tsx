@@ -56,6 +56,107 @@ function renderEntry(path = '/') {
 }
 
 describe('Review entry screens', () => {
+  it('filters reviews, archives and restores without starting an agent, and preserves the selected filter', async () => {
+    const sessions = [
+      {
+        id: 'draft',
+        repoId: repo.id,
+        prNumber: 42,
+        reviewRevision: 3,
+        createdAt: '2026-09-20',
+        config: { main: { backend: 'claude' } },
+        pullRequest: { title: 'Current draft' },
+        archivedAt: undefined as string | undefined,
+      },
+      {
+        id: 'archived',
+        repoId: 'other/repo',
+        prNumber: 1,
+        createdAt: '2026-09-21',
+        config: { main: { backend: 'claude' } },
+        pullRequest: { title: 'Older archived review' },
+        archivedAt: '2026-09-22',
+      },
+      {
+        id: 'submitted',
+        repoId: repo.id,
+        prNumber: 10,
+        createdAt: '2026-09-19',
+        config: { main: { backend: 'claude' } },
+        pullRequest: { title: 'Submitted receipt' },
+        submission: { status: 'submitted', cleanup: { status: 'complete' } },
+      },
+    ]
+    const calls: string[] = []
+    const fetcher = vi.fn(async (input: string | URL | Request, options?: RequestInit) => {
+      const url = String(input)
+      if (url === '/api/repos') return json([repo])
+      if (url === '/api/preflight') return json(preflight)
+      if (url.endsWith('/archive')) {
+        calls.push(url)
+        expect(options?.headers).toMatchObject({ 'x-legible-review-revision': '3' })
+        const { archived } = JSON.parse(String(options?.body)) as { archived: boolean }
+        sessions[0]!.archivedAt = archived ? '2026-09-22' : undefined
+        return json(sessions[0])
+      }
+      return json(sessions)
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const user = userEvent.setup()
+    renderEntry()
+    await screen.findByText('Current draft')
+    expect(screen.queryByText('Older archived review')).toBeNull()
+    await user.selectOptions(screen.getByLabelText('Review status'), 'submitted')
+    expect(screen.getByText('Submitted receipt')).toBeTruthy()
+    expect(screen.queryByText('Current draft')).toBeNull()
+    await user.selectOptions(screen.getByLabelText('Review status'), 'draft')
+    await user.selectOptions(screen.getByLabelText('Repository'), repo.id)
+    await user.click(screen.getByRole('button', { name: 'Archive Current draft' }))
+    await screen.findByText('No matching reviews')
+    expect((screen.getByLabelText('Review status') as HTMLSelectElement).value).toBe('draft')
+    await user.selectOptions(screen.getByLabelText('Review status'), 'archived')
+    expect(screen.queryByText('Older archived review')).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Restore Current draft' }))
+    await screen.findByText('No matching reviews')
+    await user.selectOptions(screen.getByLabelText('Review status'), 'active')
+    expect(screen.getByText('Current draft')).toBeTruthy()
+    expect(calls).toEqual(['/api/sessions/draft/archive', '/api/sessions/draft/archive'])
+    expect(fetcher.mock.calls.some(([input]) => String(input).includes('/chat/'))).toBe(false)
+  })
+
+  it('keeps failed archives visible and reports the active-agent conflict', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input)
+        if (url === '/api/repos') return json([repo])
+        if (url === '/api/preflight') return json(preflight)
+        if (url.endsWith('/archive'))
+          return json(
+            { error: { code: 'review_busy', message: 'Stop the active agent before archiving' } },
+            409,
+          )
+        return json([
+          {
+            id: 'busy',
+            repoId: repo.id,
+            prNumber: 42,
+            createdAt: '2026-09-20',
+            config: { main: { backend: 'claude' } },
+            pullRequest: { title: 'Running review' },
+          },
+        ])
+      }),
+    )
+    const user = userEvent.setup()
+    renderEntry()
+    await user.click(await screen.findByRole('button', { name: 'Archive Running review' }))
+    expect(await screen.findByRole('alert')).toHaveProperty(
+      'textContent',
+      'Stop the active agent before archiving',
+    )
+    expect(screen.getByText('Running review')).toBeTruthy()
+  })
   it('prefills a CLI PR link without automatically preparing a review', async () => {
     const fetcher = vi.fn<typeof fetch>(async () =>
       json({ page: 1, items: [], hasNextPage: false }),
@@ -184,7 +285,7 @@ describe('Review entry screens', () => {
     await waitFor(() =>
       expect(fetch.mock.calls.some(([input]) => String(input).endsWith('/refresh'))).toBe(true),
     )
-    await user.click(await screen.findByRole('button', { name: /Saved review/u }))
+    await user.click(await screen.findByRole('button', { name: /^Saved review/u }))
     expect(await screen.findByRole('heading', { name: 'Review opened' })).toBeTruthy()
     expect(fetch.mock.calls.some(([input]) => String(input).endsWith('/existing/open'))).toBe(true)
   })

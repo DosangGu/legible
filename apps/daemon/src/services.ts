@@ -27,12 +27,14 @@ import { SubmissionService } from './submissions/service.js'
 import { RefreshReviewService } from './sessions/refresh-service.js'
 import { CommentRelocator } from './comments/relocate.js'
 import { CodeSearchService } from './search/service.js'
+import { SessionManagementService } from './sessions/management-service.js'
 
 export type DaemonServices = {
   repoPath?: string
   repos: RepositoryService
   pullRequests: PullRequestReader
   openReviews: OpenReviewService
+  sessionManagement: SessionManagementService
   refreshReviews: RefreshReviewService
   agents: Record<AgentBackendKind, AgentBackend>
   chats: ChatService
@@ -85,6 +87,8 @@ export function createDaemonServices(options: CreateServicesOptions): DaemonServ
     onUpdated: publishPreflight,
   })
   const repos = new RepositoryService(runner, eventBus, {
+    sessionCount: (id) =>
+      sessions.list().filter((session) => session.repoId.toLowerCase() === id).length,
     ...(options.stateDirectory ? { stateDirectory: options.stateDirectory } : {}),
     ...(options.browseRoot ? { browseRoot: options.browseRoot } : {}),
   })
@@ -143,13 +147,20 @@ export function createDaemonServices(options: CreateServicesOptions): DaemonServ
   mcpHolder.server = reviewMcp
   const github = new OctokitGitHubClient(runner)
   const pullRequests = options.pullRequestReader ?? github
+  const sessionManagement = new SessionManagementService(
+    sessions,
+    chats,
+    persistence,
+    mutations,
+    options.now,
+  )
   const openReviews = new OpenReviewService(
     repos,
     pullRequests,
     worktrees,
     sessions,
     persistence,
-    mutations,
+    sessionManagement,
     preflight,
     options.now,
   )
@@ -169,6 +180,7 @@ export function createDaemonServices(options: CreateServicesOptions): DaemonServ
     repos,
     pullRequests,
     openReviews,
+    sessionManagement,
     refreshReviews: new RefreshReviewService(
       sessions,
       repos,

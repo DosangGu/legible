@@ -1,6 +1,6 @@
 import { access, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { AgentBackendKind } from '@legible/protocol'
+import { AgentBackendKind, type ReviewSession } from '@legible/protocol'
 import type { InjectOptions } from 'fastify'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createDaemon, startDaemon, type DaemonRuntime } from '../server.js'
@@ -29,6 +29,108 @@ async function client(runtime: DaemonRuntime) {
 }
 
 describe('Review entry API', () => {
+  it('authenticates management, guards revisions and restores archived reviews without deleting worktrees', async () => {
+    const f = await repositoryFixture()
+    cleanups.push(() => rm(f.root, { recursive: true, force: true }))
+    const runtime = await createDaemon({
+      version: 'test',
+      stateDirectory: f.stateDirectory,
+      browseRoot: f.root,
+      runner: f.runner,
+      pullRequestReader: {
+        listPullRequests: async () => ({ items: [], page: 1, hasNextPage: false }),
+        getPullRequest: async () => f.pull,
+      },
+    })
+    cleanups.push(() => runtime.app.close())
+    const send = await client(runtime)
+    await runtime.services.repos.register(f.checkout)
+    const second = join(f.root, 'second')
+    await git(f.root, 'clone', f.bare, second)
+    await git(second, 'remote', 'set-url', 'origin', 'https://github.com/owner/repo.git')
+    await runtime.services.repos.register(second)
+    const { session } = await runtime.services.openReviews.open({
+      repoId: 'owner/repo',
+      prNumber: 42,
+      config,
+    })
+    const url = `/api/sessions/${session.id}/archive`
+    expect(
+      (await runtime.app.inject({ method: 'POST', url, headers, payload: { archived: true } }))
+        .statusCode,
+    ).toBe(401)
+    expect(
+      (
+        await runtime.app.inject({
+          method: 'PATCH',
+          url: '/api/repos/owner/repo/primary',
+          headers,
+          payload: { path: second },
+        })
+      ).statusCode,
+    ).toBe(401)
+    expect((await send({ method: 'POST', url, payload: { archived: 'yes' } })).statusCode).toBe(400)
+    expect(
+      (
+        await send({
+          method: 'POST',
+          url,
+          headers: { 'x-legible-review-revision': '99' },
+          payload: { archived: true },
+        })
+      ).statusCode,
+    ).toBe(409)
+    expect(
+      (await send({ method: 'POST', url, payload: { archived: true } })).json<ReviewSession>()
+        .archivedAt,
+    ).toBeTruthy()
+    expect(await git(session.worktreePath, 'rev-parse', 'HEAD')).toBe(session.headSha)
+    expect((await send({ url: `/api/sessions/${session.id}` })).statusCode).toBe(200)
+    expect(
+      (await send({ method: 'POST', url: `/api/sessions/${session.id}/chat/start` })).json(),
+    ).toMatchObject({ error: { code: 'review_archived' } })
+    const details = await send({ url: '/api/repos/owner/repo/checkouts' })
+    expect(details.json()).toMatchObject({
+      sessionCount: 1,
+      checkouts: [
+        { path: f.checkout, available: true },
+        { path: second, available: true },
+      ],
+    })
+    expect(
+      (
+        await send({
+          method: 'PATCH',
+          url: '/api/repos/owner/repo/primary',
+          payload: { path: second },
+        })
+      ).json(),
+    ).toMatchObject({ error: { code: 'repo_in_use' } })
+    expect(
+      (
+        await send({
+          method: 'DELETE',
+          url: '/api/repos/owner/repo/checkouts',
+          payload: { path: f.checkout },
+        })
+      ).statusCode,
+    ).toBe(409)
+    expect(
+      (
+        await send({
+          method: 'DELETE',
+          url: '/api/repos/owner/repo/checkouts',
+          payload: { path: second },
+        })
+      ).statusCode,
+    ).toBe(200)
+    expect(await git(second, 'rev-parse', 'HEAD')).toBe(session.headSha)
+    expect(
+      (await send({ method: 'POST', url, payload: { archived: false } })).json<ReviewSession>()
+        .archivedAt,
+    ).toBeUndefined()
+    expect((await send({ url: `/api/sessions/${session.id}/diff` })).statusCode).toBe(200)
+  })
   it('registers, lists PRs, opens and restores a review without model calls', async () => {
     const f = await repositoryFixture()
     cleanups.push(() => rm(f.root, { recursive: true, force: true }))

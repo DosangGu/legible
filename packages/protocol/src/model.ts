@@ -11,6 +11,13 @@ export type Repo = {
   primaryCheckout: string
 }
 
+export type RepositoryDetails = {
+  repo: Repo
+  checkouts: Array<{ path: string; available: boolean; message?: string }>
+  sessionCount: number
+  primaryChangeBlocked?: string
+}
+
 export type ReviewSession = {
   reviewRevision?: number
   baseTipSha?: string
@@ -28,6 +35,7 @@ export type ReviewSession = {
   submission?: ReviewSubmission
   createdAt: string
   lastOpenedAt?: string
+  archivedAt?: string
   pullRequest?: { title: string; url: string }
 }
 

@@ -13,6 +13,7 @@ export type {
   CreateDraftCommentRequest,
   DraftComment,
   Repo,
+  RepositoryDetails,
   ReviewConfig,
   ReviewEvent,
   ReviewSession,

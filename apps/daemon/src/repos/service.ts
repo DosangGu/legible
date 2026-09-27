@@ -1,8 +1,9 @@
 import { lstat, readFile, realpath } from 'node:fs/promises'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { homedir } from 'node:os'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
-import type { Repo } from '@legible/protocol'
+import type { Repo, RepositoryDetails } from '@legible/protocol'
 import * as z from 'zod/v4'
 
 import { ServiceError } from '../common/service-error.js'
@@ -24,14 +25,36 @@ export class RepositoryService {
   readonly #queue = new SessionMutationQueue()
   readonly #path: string
   readonly #root: string
+  readonly #lock = new AsyncLocalStorage<{ active: boolean }>()
+  readonly #sessionCount: (id: string) => number
 
   constructor(
     private readonly runner: CommandRunner,
     private readonly events: EventBus,
-    options: { stateDirectory?: string; browseRoot?: string } = {},
+    options: {
+      stateDirectory?: string
+      browseRoot?: string
+      sessionCount?: (id: string) => number
+    } = {},
   ) {
     this.#path = join(options.stateDirectory ?? defaultStateDirectory(), 'repos.json')
     this.#root = resolve(options.browseRoot ?? process.env.LEGIBLE_BROWSE_ROOT ?? homedir())
+    this.#sessionCount = options.sessionCount ?? (() => 0)
+  }
+
+  /** Covers preparation through session persistence as well as checkout mutations. */
+  withLock<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.#lock.getStore()?.active) return operation()
+    return this.#queue.run('registry', () => {
+      const context = { active: true }
+      return this.#lock.run(context, async () => {
+        try {
+          return await operation()
+        } finally {
+          context.active = false
+        }
+      })
+    })
   }
 
   async restore(): Promise<void> {
@@ -78,7 +101,7 @@ export class RepositoryService {
   }
 
   register(path: string): Promise<Repo> {
-    return this.#queue.run('registry', async () => {
+    return this.withLock(async () => {
       const inspected = await this.#inspect(path)
       const existing = this.#repos.get(inspected.id)
       const repo: Repo = existing
@@ -90,16 +113,116 @@ export class RepositoryService {
             checkouts: [inspected.path],
             primaryCheckout: inspected.path,
           }
-      const next = new Map(this.#repos).set(repo.id, repo)
-      try {
-        await writeState(this.#path, { version: 1, repos: [...next.values()] })
-      } catch {
-        throw new ServiceError('repo_store_failed', 'Unable to save the repository registry', 500)
-      }
-      this.#repos.set(repo.id, repo)
-      this.events.publish({ type: 'repo.updated', payload: structuredClone(repo) })
-      return structuredClone(repo)
+      return this.#save(repo)
     })
+  }
+
+  details(id: string): Promise<RepositoryDetails> {
+    return this.withLock(async () => {
+      const repo = this.get(id)
+      const checkouts = []
+      for (const path of repo.checkouts) {
+        try {
+          await this.#validateCheckout(repo, path)
+          checkouts.push({ path, available: true })
+        } catch (error) {
+          checkouts.push({
+            path,
+            available: false,
+            message: error instanceof ServiceError ? error.message : 'Checkout unavailable',
+          })
+        }
+      }
+      const sessionCount = this.#sessionCount(repo.id)
+      let primaryChangeBlocked: string | undefined
+      try {
+        await this.#assertPrimaryChange(repo)
+      } catch (error) {
+        primaryChangeBlocked =
+          error instanceof ServiceError ? error.message : 'Unable to verify checkout dependencies'
+      }
+      return {
+        repo,
+        checkouts,
+        sessionCount,
+        ...(primaryChangeBlocked ? { primaryChangeBlocked } : {}),
+      }
+    })
+  }
+
+  setPrimary(id: string, path: string): Promise<Repo> {
+    return this.withLock(async () => {
+      const repo = this.get(id)
+      this.#assertRegistered(repo, path)
+      await this.#validateCheckout(repo, path)
+      if (repo.primaryCheckout === path) return repo
+      await this.#assertPrimaryChange(repo)
+      return this.#save({ ...repo, primaryCheckout: path })
+    })
+  }
+
+  forgetCheckout(id: string, path: string): Promise<Repo> {
+    return this.withLock(async () => {
+      const repo = this.get(id)
+      this.#assertRegistered(repo, path)
+      if (path === repo.primaryCheckout)
+        throw new ServiceError(
+          'primary_checkout_required',
+          'Choose another primary checkout before forgetting this path',
+          409,
+        )
+      // Sessions and managed worktrees only use the primary. No filesystem operation occurs.
+      return this.#save({ ...repo, checkouts: repo.checkouts.filter((entry) => entry !== path) })
+    })
+  }
+
+  #assertRegistered(repo: Repo, path: string): void {
+    if (!repo.checkouts.includes(path))
+      throw new ServiceError(
+        'checkout_not_registered',
+        'Select an exact registered checkout path',
+        404,
+      )
+  }
+
+  async #validateCheckout(repo: Repo, path: string): Promise<void> {
+    const inspected = await this.#inspect(path)
+    if (inspected.path !== path || inspected.id !== repo.id)
+      throw new ServiceError(
+        'repo_changed',
+        'The registered checkout or its origin changed; restore the original checkout',
+        409,
+      )
+  }
+
+  async #assertPrimaryChange(repo: Repo): Promise<void> {
+    if (this.#sessionCount(repo.id) > 0)
+      throw new ServiceError(
+        'repo_in_use',
+        'Saved reviews (including archived reviews) depend on this primary checkout',
+        409,
+      )
+    await this.#validateCheckout(repo, repo.primaryCheckout)
+    const listing = await this.#git(repo.primaryCheckout, ['worktree', 'list', '--porcelain', '-z'])
+    const paths = listing.split('\0').filter((entry) => entry.startsWith('worktree '))
+    if (paths.length !== 1)
+      throw new ServiceError(
+        'repo_worktrees_in_use',
+        'Linked worktrees depend on this primary checkout; no paths were changed',
+        409,
+      )
+  }
+
+  async #save(repo: Repo): Promise<Repo> {
+    const next = new Map(this.#repos).set(repo.id, repo)
+    try {
+      await writeState(this.#path, { version: 1, repos: [...next.values()] })
+    } catch {
+      throw new ServiceError('repo_store_failed', 'Unable to save the repository registry', 500)
+    }
+    this.#repos.set(repo.id, repo)
+    this.events.publish({ type: 'repo.updated', payload: structuredClone(repo) })
+    return structuredClone(repo)
   }
 
   /** Revalidate filesystem and origin immediately before operations on a registered clone. */

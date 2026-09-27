@@ -27,6 +27,16 @@ export class SessionRegistry {
   }
 
   assertMutable(id: string): void {
+    this.assertCurrent(id)
+    if (this.get(id)?.archivedAt)
+      throw new ServiceError(
+        'review_archived',
+        'Restore this archived review before continuing',
+        409,
+      )
+  }
+
+  assertCurrent(id: string): void {
     if (this.#refreshing.has(id))
       throw new ServiceError(
         'review_refreshing',
@@ -44,6 +54,11 @@ export class SessionRegistry {
 
   beginRefresh(id: string): () => void {
     this.assertMutable(id)
+    return this.beginUpdate(id)
+  }
+
+  beginUpdate(id: string): () => void {
+    this.assertCurrent(id)
     this.#refreshing.add(id)
     return () => this.#refreshing.delete(id)
   }

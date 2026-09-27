@@ -10,6 +10,7 @@ import type {
   ReviewSession,
   SubmitReviewRequest,
   Repo,
+  RepositoryDetails,
   PullRequestPage,
   CreateSessionRequest,
   CreateSessionResponse,
@@ -213,6 +214,30 @@ function chatCommand(
 
 export function fetchRepos(signal?: AbortSignal): Promise<Repo[]> {
   return request('/api/repos', signal ? { signal } : {})
+}
+
+export function fetchCheckouts(repo: Repo, signal?: AbortSignal): Promise<RepositoryDetails> {
+  return request(`${repoUrl(repo)}/checkouts`, signal ? { signal } : {})
+}
+
+export function setPrimaryCheckout(repo: Repo, path: string): Promise<Repo> {
+  return request(`${repoUrl(repo)}/primary`, { method: 'PATCH', body: JSON.stringify({ path }) })
+}
+
+export function forgetCheckout(repo: Repo, path: string): Promise<Repo> {
+  return request(`${repoUrl(repo)}/checkouts`, { method: 'DELETE', body: JSON.stringify({ path }) })
+}
+
+function repoUrl(repo: Repo): string {
+  return `/api/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}`
+}
+
+export function archiveSession(session: ReviewSession, archived: boolean): Promise<ReviewSession> {
+  return request(`/api/sessions/${encodeURIComponent(session.id)}/archive`, {
+    method: 'POST',
+    body: JSON.stringify({ archived }),
+    headers: revisionHeaders(session.reviewRevision ?? 0),
+  })
 }
 
 export function checkReviewUpdates(session: ReviewSession): Promise<ReviewUpdate> {

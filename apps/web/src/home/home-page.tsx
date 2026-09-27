@@ -1,5 +1,6 @@
-import { useState, type FormEvent } from 'react'
+import { lazy, Suspense, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import type { Repo } from '@legible/protocol'
 import {
   fetchPreflight,
   fetchRepos,
@@ -7,9 +8,14 @@ import {
   refreshPreflight,
   registerRepo,
   touchSession,
+  archiveSession,
 } from '../api.js'
 import { HomeShell, LoadError } from './shell.js'
 import { useResource } from './use-resource.js'
+
+const CheckoutManager = lazy(async () => ({
+  default: (await import('./checkout-manager.js')).CheckoutManager,
+}))
 
 const loadHome = async (signal: AbortSignal) => {
   const [repos, sessions, preflight] = await Promise.all([
@@ -25,6 +31,22 @@ export function HomePage() {
   const [path, setPath] = useState('')
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState('')
+  const [repoFilter, setRepoFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState('active')
+  const [managedRepo, setManagedRepo] = useState<Repo>()
+  const visibleSessions = (state.data?.sessions ?? [])
+    .filter((session) => {
+      if (repoFilter !== 'all' && session.repoId !== repoFilter) return false
+      if (statusFilter === 'all') return true
+      if (statusFilter === 'archived') return Boolean(session.archivedAt)
+      if (session.archivedAt) return false
+      if (statusFilter === 'draft') return !session.submission
+      if (statusFilter === 'submitted') return session.submission?.status === 'submitted'
+      if (statusFilter === 'attention')
+        return session.submission && session.submission.status !== 'submitted'
+      return true
+    })
+    .sort((a, b) => (b.lastOpenedAt ?? b.createdAt).localeCompare(a.lastOpenedAt ?? a.createdAt))
   const navigate = useNavigate()
   const act = async (operation: () => Promise<void>) => {
     setBusy(true)
@@ -57,6 +79,15 @@ export function HomePage() {
           {failure}
         </p>
       )}
+      {managedRepo && (
+        <Suspense fallback={<p role="status">Loading checkout management…</p>}>
+          <CheckoutManager
+            key={managedRepo.id}
+            repo={managedRepo}
+            onClose={() => setManagedRepo(undefined)}
+          />
+        </Suspense>
+      )}
       {state.error ? (
         <LoadError message={state.error} retry={state.reload} />
       ) : !state.data ? (
@@ -87,47 +118,112 @@ export function HomePage() {
             <section className="home-card">
               <div className="section-heading">
                 <h2>Recent reviews</h2>
-                <span className="count-badge">{state.data.sessions.length}</span>
+                <span className="count-badge">{visibleSessions.length}</span>
               </div>
-              {state.data.sessions.length === 0 ? (
+              <div className="review-filters">
+                <div>
+                  <label htmlFor="filter-repository">Repository</label>
+                  <select
+                    id="filter-repository"
+                    value={repoFilter}
+                    onChange={(event) => setRepoFilter(event.target.value)}
+                  >
+                    <option value="all">All repositories</option>
+                    {[
+                      ...new Set([
+                        ...state.data.repos.map((repo) => repo.id),
+                        ...state.data.sessions.map((session) => session.repoId),
+                      ]),
+                    ]
+                      .sort()
+                      .map((id) => (
+                        <option key={id} value={id}>
+                          {id}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="filter-review-status">Review status</label>
+                  <select
+                    id="filter-review-status"
+                    value={statusFilter}
+                    onChange={(event) => setStatusFilter(event.target.value)}
+                  >
+                    <option value="active">Not archived</option>
+                    <option value="draft">Draft</option>
+                    <option value="submitted">Submitted</option>
+                    <option value="attention">Submission pending / uncertain</option>
+                    <option value="archived">Archived</option>
+                    <option value="all">All reviews</option>
+                  </select>
+                </div>
+              </div>
+              {visibleSessions.length === 0 ? (
                 <div className="home-empty">
-                  <h3>No reviews yet</h3>
-                  <p>Open a repository and choose a pull request to begin.</p>
+                  <h3>
+                    {state.data.sessions.length === 0 ? 'No reviews yet' : 'No matching reviews'}
+                  </h3>
+                  <p>
+                    {state.data.sessions.length === 0
+                      ? 'Open a repository and choose a pull request to begin.'
+                      : 'Change the filters to find saved or archived reviews.'}
+                  </p>
                 </div>
               ) : (
                 <ul className="review-list">
-                  {[...state.data.sessions]
-                    .sort((a, b) =>
-                      (b.lastOpenedAt ?? b.createdAt).localeCompare(a.lastOpenedAt ?? a.createdAt),
-                    )
-                    .map((session) => (
-                      <li key={session.id}>
-                        <button
-                          className="review-row"
-                          type="button"
-                          disabled={busy}
-                          onClick={() =>
-                            void act(async () => {
-                              await touchSession(session.id)
-                              navigate(`/review/${encodeURIComponent(session.id)}`)
-                            })
-                          }
-                        >
-                          <span>
-                            <span className="row-title">
-                              {session.pullRequest?.title ??
-                                `Pull request #${String(session.prNumber)}`}
-                            </span>
-                            <span className="row-meta">
-                              {session.repoId} · #{session.prNumber} · {session.config.main.backend}
-                            </span>
+                  {visibleSessions.map((session) => (
+                    <li key={session.id} className="managed-review-row">
+                      <button
+                        className="review-row"
+                        type="button"
+                        disabled={busy}
+                        onClick={() =>
+                          void act(async () => {
+                            await touchSession(session.id)
+                            navigate(`/review/${encodeURIComponent(session.id)}`)
+                          })
+                        }
+                      >
+                        <span>
+                          <span className="row-title">
+                            {session.pullRequest?.title ??
+                              `Pull request #${String(session.prNumber)}`}
                           </span>
-                          <span className="status-badge">
-                            {session.submission?.status ?? 'Draft'}
+                          <span className="row-meta">
+                            {session.repoId} · #{session.prNumber} · {session.config.main.backend}
                           </span>
-                        </button>
-                      </li>
-                    ))}
+                        </span>
+                        <span className="status-badge">
+                          {session.archivedAt
+                            ? 'Archived · open to restore'
+                            : (session.submission?.status ?? 'Draft')}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        className="review-archive-button"
+                        disabled={
+                          busy ||
+                          Boolean(
+                            !session.archivedAt &&
+                            session.submission &&
+                            (session.submission.status !== 'submitted' ||
+                              session.submission.cleanup.status !== 'complete'),
+                          )
+                        }
+                        aria-label={`${session.archivedAt ? 'Restore' : 'Archive'} ${session.pullRequest?.title ?? `review #${String(session.prNumber)}`}`}
+                        onClick={() =>
+                          void act(async () => {
+                            await archiveSession(session, !session.archivedAt)
+                            state.reload()
+                          })
+                        }
+                      >
+                        {session.archivedAt ? 'Restore' : 'Archive'}
+                      </button>
+                    </li>
+                  ))}
                 </ul>
               )}
             </section>
@@ -147,6 +243,9 @@ export function HomePage() {
                         <strong>{repo.id}</strong>
                         <span className="row-meta">{repo.primaryCheckout}</span>
                       </Link>
+                      <button type="button" onClick={() => setManagedRepo(repo)}>
+                        Manage checkouts
+                      </button>
                     </li>
                   ))}
                 </ul>

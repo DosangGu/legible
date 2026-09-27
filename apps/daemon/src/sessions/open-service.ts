@@ -16,6 +16,7 @@ import type { ReviewWorktrees } from '../worktrees/manager.js'
 import { SessionMutationQueue } from './mutation-queue.js'
 import type { SessionRegistry } from './session-registry.js'
 import type { SessionPersistence } from './persistence.js'
+import type { SessionManagementService } from './management-service.js'
 
 const requestSchema = z
   .object({
@@ -69,7 +70,7 @@ export class OpenReviewService {
     private readonly worktrees: ReviewWorktrees,
     private readonly sessions: SessionRegistry,
     private readonly persistence: SessionPersistence,
-    private readonly mutations: SessionMutationQueue,
+    private readonly management: SessionManagementService,
     private readonly preflight: PreflightService,
     private readonly now: () => Date = () => new Date(),
   ) {}
@@ -85,65 +86,56 @@ export class OpenReviewService {
             session.prNumber === request.prNumber,
         )
       if (previous) return { session: await this.touch(previous.id), reused: true }
-      this.preflight.assertTools(['git', 'gh'])
-      const repo = this.repos.get(request.repoId)
-      const pull = await this.github.getPullRequest(repo.owner, repo.name, request.prNumber)
-      if (pull.number !== request.prNumber)
-        throw new ServiceError(
-          'invalid_pull_request',
-          'GitHub returned a different pull request',
-          502,
-        )
-      const prepared = await this.worktrees.prepare(repo.id, pull)
-      const session: ReviewSession = {
-        id: randomUUID(),
-        repoId: repo.id,
-        prNumber: pull.number,
-        headSha: prepared.headSha,
-        baseSha: prepared.baseSha,
-        reviewRevision: 0,
-        baseTipSha: pull.baseSha,
-        baseRef: pull.baseRef,
-        worktreePath: prepared.path,
-        config: request.config,
-        comments: [],
-        createdAt: this.now().toISOString(),
-        lastOpenedAt: this.now().toISOString(),
-        pullRequest: { title: pull.title, url: pull.url },
-      }
-      try {
-        await this.persistence.save(session)
-      } catch {
-        let cleanupFailed = false
-        if (!prepared.reused)
-          await this.worktrees.remove(session).catch(() => {
-            cleanupFailed = true
-          })
-        throw new ServiceError(
-          'session_save_failed',
-          cleanupFailed
-            ? 'Unable to save the review. Its new worktree could not be cleaned up; existing data was preserved.'
-            : 'Unable to save the review. Retry after fixing access to the state directory.',
-          500,
-        )
-      }
-      this.sessions.add(session)
-      return { session, reused: false }
+      return this.repos.withLock(async () => {
+        this.preflight.assertTools(['git', 'gh'])
+        const repo = this.repos.get(request.repoId)
+        const pull = await this.github.getPullRequest(repo.owner, repo.name, request.prNumber)
+        if (pull.number !== request.prNumber)
+          throw new ServiceError(
+            'invalid_pull_request',
+            'GitHub returned a different pull request',
+            502,
+          )
+        const prepared = await this.worktrees.prepare(repo.id, pull)
+        const session: ReviewSession = {
+          id: randomUUID(),
+          repoId: repo.id,
+          prNumber: pull.number,
+          headSha: prepared.headSha,
+          baseSha: prepared.baseSha,
+          reviewRevision: 0,
+          baseTipSha: pull.baseSha,
+          baseRef: pull.baseRef,
+          worktreePath: prepared.path,
+          config: request.config,
+          comments: [],
+          createdAt: this.now().toISOString(),
+          lastOpenedAt: this.now().toISOString(),
+          pullRequest: { title: pull.title, url: pull.url },
+        }
+        try {
+          await this.persistence.save(session)
+        } catch {
+          let cleanupFailed = false
+          if (!prepared.reused)
+            await this.worktrees.remove(session).catch(() => {
+              cleanupFailed = true
+            })
+          throw new ServiceError(
+            'session_save_failed',
+            cleanupFailed
+              ? 'Unable to save the review. Its new worktree could not be cleaned up; existing data was preserved.'
+              : 'Unable to save the review. Retry after fixing access to the state directory.',
+            500,
+          )
+        }
+        this.sessions.add(session)
+        return { session, reused: false }
+      })
     })
   }
 
   touch(id: string): Promise<ReviewSession> {
-    return this.mutations.run(id, async () => {
-      const session = this.sessions.get(id)
-      if (!session) throw new ServiceError('session_not_found', 'Review session not found', 404)
-      const updated = { ...session, lastOpenedAt: this.now().toISOString() }
-      try {
-        await this.persistence.save(updated)
-      } catch {
-        throw new ServiceError('session_save_failed', 'Unable to update recent reviews', 500)
-      }
-      this.sessions.replace(updated)
-      return updated
-    })
+    return this.management.open(id)
   }
 }

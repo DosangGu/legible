@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createDaemonServices, type DaemonServices } from '../services.js'
 import { git, repositoryFixture } from '../testing/repository.js'
 import { parseCreateSessionRequest } from './open-service.js'
+import { join } from 'node:path'
+import { deferred } from '../testing/deferred.js'
 
 const roots: string[] = []
 const servicesToClose: DaemonServices[] = []
@@ -49,6 +51,30 @@ async function setup() {
 }
 
 describe('OpenReviewService', () => {
+  it('serializes primary changes with the entire prepare-and-save operation', async () => {
+    const f = await setup()
+    const second = join(f.root, 'second')
+    await git(f.root, 'clone', f.bare, second)
+    await git(second, 'remote', 'set-url', 'origin', 'https://github.com/owner/repo.git')
+    await f.services.repos.register(second)
+    const waiting = deferred()
+    const entered = deferred()
+    const save = f.services.persistence.save.bind(f.services.persistence)
+    vi.spyOn(f.services.persistence, 'save').mockImplementation(async (session) => {
+      entered.resolve()
+      await waiting.promise
+      await save(session)
+    })
+    const opening = f.services.openReviews.open({ repoId: 'owner/repo', prNumber: 42, config })
+    await entered.promise
+    const changing = f.services.repos.setPrimary('owner/repo', second)
+    const failure = expect(changing).rejects.toMatchObject({ code: 'repo_in_use' })
+    waiting.resolve()
+    const opened = await opening
+    await failure
+    expect(f.services.repos.get('owner/repo').primaryCheckout).toBe(f.checkout)
+    expect(await git(opened.session.worktreePath, 'rev-parse', 'HEAD')).toBe(f.pull.headSha)
+  })
   it('coalesces duplicate opens, persists pinned data, and never starts an agent', async () => {
     const f = await setup()
     const request = { repoId: 'owner/repo', prNumber: 42, config }

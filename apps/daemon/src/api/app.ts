@@ -92,7 +92,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       if (typeof raw !== 'string' || !/^\d+$/u.test(raw) || !Number.isSafeInteger(revision))
         throw new ServiceError('invalid_review_revision', 'Invalid review revision')
       return options.services.sessions.withRevision(sessionId, revision, () => {
-        options.services.sessions.assertMutable(sessionId)
+        if (route.url.endsWith('/archive')) options.services.sessions.assertCurrent(sessionId)
+        else options.services.sessions.assertMutable(sessionId)
         return handler.call(this, request, reply)
       })
     }
@@ -125,6 +126,26 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     options.services.preflight.assertTools(['git'])
     return reply.code(201).send(await options.services.repos.register(request.body.path))
   })
+  app.get<{ Params: { owner: string; name: string } }>(
+    '/api/repos/:owner/:name/checkouts',
+    (request) => options.services.repos.details(`${request.params.owner}/${request.params.name}`),
+  )
+  app.patch<{ Params: { owner: string; name: string }; Body: unknown }>(
+    '/api/repos/:owner/:name/primary',
+    (request) =>
+      options.services.repos.setPrimary(
+        `${request.params.owner}/${request.params.name}`,
+        checkoutPath(request.body),
+      ),
+  )
+  app.delete<{ Params: { owner: string; name: string }; Body: unknown }>(
+    '/api/repos/:owner/:name/checkouts',
+    (request) =>
+      options.services.repos.forgetCheckout(
+        `${request.params.owner}/${request.params.name}`,
+        checkoutPath(request.body),
+      ),
+  )
   app.get<{ Params: { owner: string; name: string }; Querystring: { page?: string } }>(
     '/api/repos/:owner/:name/pulls',
     async (request) => {
@@ -142,6 +163,18 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   })
   app.post<{ Params: { sessionId: string } }>('/api/sessions/:sessionId/open', async (request) =>
     options.services.openReviews.touch(request.params.sessionId),
+  )
+  app.post<{ Params: { sessionId: string }; Body: unknown }>(
+    '/api/sessions/:sessionId/archive',
+    (request) => {
+      const parsed = z.object({ archived: z.boolean() }).strict().safeParse(request.body)
+      if (!parsed.success)
+        throw new ServiceError('invalid_archive_request', 'Specify whether to archive this review')
+      return options.services.sessionManagement.archive(
+        request.params.sessionId,
+        parsed.data.archived,
+      )
+    },
   )
 
   app.get<{ Params: { sessionId: string } }>('/api/sessions/:sessionId/updates', (request) =>
@@ -623,6 +656,16 @@ function mapChatError(error: unknown): { status: 400 | 404 | 409; body: ApiError
 
 function isDiffSide(value: unknown): value is DiffSide {
   return value === 'LEFT' || value === 'RIGHT'
+}
+
+function checkoutPath(body: unknown): string {
+  const parsed = z
+    .object({ path: z.string().min(1).max(4096) })
+    .strict()
+    .safeParse(body)
+  if (!parsed.success)
+    throw new ServiceError('invalid_repo_path', 'Select a registered checkout path')
+  return parsed.data.path
 }
 
 async function withReadAbort<T>(

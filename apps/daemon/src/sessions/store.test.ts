@@ -8,6 +8,20 @@ import { reviewSession } from '../testing/fixtures.js'
 import { SessionStore, SessionStoreError } from './store.js'
 
 describe('SessionStore', () => {
+  it('round-trips archive timestamps and rejects malformed archive metadata', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'legible-store-'))
+    const store = new SessionStore(root)
+    const session = reviewSession({ archivedAt: '2026-09-22T00:00:00.000Z' })
+    await store.save({ version: 3, session })
+    expect((await store.loadAll())[0]?.session).toEqual(session)
+    for (const archivedAt of ['', false, 'not a date']) {
+      await writeFile(
+        store.pathFor(session.id),
+        JSON.stringify({ version: 3, session: { ...session, archivedAt } }),
+      )
+      await expect(store.loadAll()).rejects.toThrow(SessionStoreError)
+    }
+  })
   it('atomically round-trips a versioned session using private permissions', async () => {
     const root = await mkdtemp(join(tmpdir(), 'legible-store-'))
     const store = new SessionStore(root)

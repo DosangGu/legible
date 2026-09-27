@@ -33,6 +33,28 @@ afterEach(() => {
 })
 
 describe('ReviewPage', () => {
+  it('opens an archived link without reading its diff and restores only on explicit action', async () => {
+    let session = webSession({ archivedAt: '2026-09-22T00:00:00.000Z' })
+    const fetcher = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.endsWith('/open')) {
+        session = webSession()
+        return jsonResponse(session)
+      }
+      if (url === '/api/sessions/session-1') return jsonResponse(session)
+      if (url.endsWith('/chat')) return jsonResponse(emptyChat())
+      if (url.endsWith('/comments')) return jsonResponse([])
+      return jsonResponse(diffDocument())
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const user = userEvent.setup()
+    renderReview()
+    await screen.findByRole('heading', { name: 'Archived review' })
+    expect(fetcher.mock.calls.some(([input]) => String(input).endsWith('/diff'))).toBe(false)
+    await user.click(screen.getByRole('button', { name: 'Restore review' }))
+    await screen.findByRole('heading', { name: 'session-1' })
+    expect(fetcher.mock.calls.some(([input]) => String(input).endsWith('/chat/start'))).toBe(false)
+  })
   it('finds visible text with shortcuts and navigates pinned search files without granting non-diff anchors', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input)

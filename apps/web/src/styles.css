@@ -1467,3 +1467,64 @@ button {
   font-size: 11px;
   color: var(--text);
 }
+.review-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.review-filters > div {
+  display: grid;
+  gap: 6px;
+  flex: 1 1 180px;
+  font-size: 13px;
+}
+
+.review-filters select {
+  width: 100%;
+  min-width: 0;
+}
+
+.managed-review-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.managed-review-row .review-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.review-archive-button {
+  flex-shrink: 0;
+}
+
+.checkout-manager {
+  margin-bottom: 24px;
+}
+
+.checkout-list {
+  padding: 0;
+  list-style: none;
+}
+
+.checkout-list li {
+  padding: 16px 0;
+  border-top: 1px solid var(--border);
+}
+
+.checkout-path {
+  overflow-wrap: anywhere;
+}
+
+.checkout-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.checkout-confirm {
+  margin-top: 12px;
+}

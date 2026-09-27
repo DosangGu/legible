@@ -1,6 +1,7 @@
 import { mkdir, readFile, rm, stat, symlink } from 'node:fs/promises'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { deferred } from '../testing/deferred.js'
 import { EventBus } from '../events/event-bus.js'
 import { git, repositoryFixture } from '../testing/repository.js'
 import { githubRepoId, RepositoryService } from './service.js'
@@ -21,6 +22,114 @@ async function setup() {
 }
 
 describe('RepositoryService', () => {
+  async function secondCheckout(f: Awaited<ReturnType<typeof setup>>) {
+    const second = join(f.root, 'second')
+    await git(f.root, 'clone', f.bare, second)
+    await git(second, 'remote', 'set-url', 'origin', 'git@github.com:owner/repo.git')
+    await f.service.register(f.checkout)
+    await f.service.register(second)
+    return second
+  }
+
+  it('changes an unused primary, forgets registration only, and persists before publishing', async () => {
+    const f = await setup()
+    const second = await secondCheckout(f)
+    expect(await f.service.details('owner/repo')).toMatchObject({
+      sessionCount: 0,
+      checkouts: [
+        { path: f.checkout, available: true },
+        { path: second, available: true },
+      ],
+    })
+    const updated = await f.service.setPrimary('owner/repo', second)
+    expect(updated.primaryCheckout).toBe(second)
+    const forgotten = await f.service.forgetCheckout('owner/repo', f.checkout)
+    expect(forgotten.checkouts).toEqual([second])
+    expect(await git(f.checkout, 'rev-parse', 'HEAD')).toBe(f.pull.headSha)
+    const restored = new RepositoryService(f.runner, f.events, {
+      stateDirectory: f.stateDirectory,
+      browseRoot: f.root,
+    })
+    await restored.restore()
+    expect(restored.get('owner/repo')).toEqual(forgotten)
+    await expect(f.service.forgetCheckout('owner/repo', second)).rejects.toMatchObject({
+      code: 'primary_checkout_required',
+    })
+    await expect(f.service.setPrimary('owner/repo', f.checkout)).rejects.toMatchObject({
+      code: 'checkout_not_registered',
+    })
+  })
+
+  it('blocks primary changes with saved reviews or linked worktrees', async () => {
+    const f = await setup()
+    const second = await secondCheckout(f)
+    const protectedService = new RepositoryService(f.runner, f.events, {
+      stateDirectory: f.stateDirectory,
+      browseRoot: f.root,
+      sessionCount: () => 1,
+    })
+    await protectedService.restore()
+    await expect(protectedService.setPrimary('owner/repo', second)).rejects.toMatchObject({
+      code: 'repo_in_use',
+    })
+    expect((await protectedService.details('owner/repo')).primaryChangeBlocked).toContain(
+      'archived',
+    )
+    const linked = join(f.root, 'linked')
+    await git(f.checkout, 'worktree', 'add', '--detach', linked, 'HEAD')
+    await expect(f.service.setPrimary('owner/repo', second)).rejects.toMatchObject({
+      code: 'repo_worktrees_in_use',
+    })
+    expect(f.service.get('owner/repo').primaryCheckout).toBe(f.checkout)
+    expect(await git(linked, 'rev-parse', 'HEAD')).toBe(f.pull.headSha)
+  })
+
+  it('reports invalid paths, revalidates target identity and can forget an unavailable secondary', async () => {
+    const f = await setup()
+    const second = await secondCheckout(f)
+    await git(second, 'remote', 'set-url', 'origin', 'https://github.com/other/repo.git')
+    await expect(f.service.setPrimary('owner/repo', second)).rejects.toMatchObject({
+      code: 'repo_changed',
+    })
+    expect((await f.service.details('owner/repo')).checkouts[1]).toMatchObject({ available: false })
+    await rm(second, { recursive: true })
+    expect((await f.service.details('owner/repo')).checkouts[1]).toMatchObject({ available: false })
+    await f.service.forgetCheckout('owner/repo', second)
+    expect(f.service.get('owner/repo').checkouts).toEqual([f.checkout])
+  })
+
+  it('waits for repository operations before rechecking primary dependencies', async () => {
+    const f = await setup()
+    const second = await secondCheckout(f)
+    const waiting = deferred()
+    const entered = deferred()
+    const running = f.service.withLock(async () => {
+      entered.resolve()
+      await waiting.promise
+      await git(f.checkout, 'worktree', 'add', '--detach', join(f.root, 'prepared'), 'HEAD')
+    })
+    await entered.promise
+    const changed = f.service.setPrimary('owner/repo', second)
+    const failure = expect(changed).rejects.toMatchObject({ code: 'repo_worktrees_in_use' })
+    waiting.resolve()
+    await running
+    await failure
+    expect(f.service.get('owner/repo').primaryCheckout).toBe(f.checkout)
+  })
+
+  it('keeps registry and events unchanged when saving a checkout change fails', async () => {
+    const f = await setup()
+    const second = await secondCheckout(f)
+    await rm(join(f.stateDirectory, 'repos.json'))
+    await mkdir(join(f.stateDirectory, 'repos.json'))
+    const publish = vi.spyOn(f.events, 'publish')
+    await expect(f.service.setPrimary('owner/repo', second)).rejects.toMatchObject({
+      code: 'repo_store_failed',
+    })
+    expect(f.service.get('owner/repo').primaryCheckout).toBe(f.checkout)
+    expect(publish).not.toHaveBeenCalled()
+    publish.mockRestore()
+  })
   it('normalizes aliases, deduplicates checkouts and persists before publishing', async () => {
     const f = await setup()
     await mkdir(join(f.checkout, 'nested'))

@@ -579,7 +579,7 @@ The path root is `LEGIBLE_BROWSE_ROOT`, defaulting to `$HOME`. It is not editabl
 Normalize with realpath, verify containment, find the Git top level, and verify containment again.
 Accept regular clones only. Reject linked worktrees, bare repositories, non-GitHub.com origins,
 and remote URLs with embedded credentials. The registry persists canonical paths and keeps its first
-primary checkout; revalidate origin and checkout identity before worktree operations.
+primary checkout unless explicitly changed; revalidate origin and checkout identity before worktree operations.
 
 The PR page lists 30 open PRs per page and accepts a PR number directly. Agent selection defaults
 to Claude with shell/network off; switching to Codex defaults to broad commands within its read-only
@@ -593,6 +593,32 @@ are described above. Multi-repository cleanup resolves and validates the session
 worktree, including its generation suffix.
 
 From the second run onward, **recent items are the first screen.** Design the empty state and the everyday state separately.
+
+### Repository and saved-review management
+
+The home screen filters recent reviews by repository and visibility/submission state, newest-opened
+first. Archive is a reversible metadata transition (`archivedAt`, optional in v3 records), not deletion.
+Preserve comments, chats, pinned revisions, receipts/history and worktrees. Include archived sessions
+in snapshots and active worktree protection; hide them by default in the UI. Archive rejects active
+agents, refreshes, pending mutations, uncertain/in-flight submissions and incomplete cleanup. Serialize
+the transition with session mutations and block new turns during persistence. Save before publish;
+failed saves leave the old state visible. Archived review operations are locked until explicit restore
+or reopen. Direct archived URLs offer restore before loading the diff. Reopening reuses the same
+session without fetching commits or invoking a model. Restore does not change the review revision.
+
+Checkout management shows all registered canonical paths, current availability and primary-change
+restrictions. Forgetting only removes a non-primary registry entry; it does not touch the filesystem.
+The primary is mandatory. Changing it requires a valid registered target with matching origin, zero
+saved sessions (including archived/submitted history), and no linked worktrees on the current primary.
+Fail closed if the current checkout cannot be inspected. This conservative rule avoids redirecting
+old worktree ownership to an unrelated clone. Serialize registry changes and worktree operations,
+holding the registry lock from new review preparation through persistence/publication. Reuse that lock
+for nested worktree operations. Revalidate all dependencies inside the lock, never trust UI status.
+
+Authenticated management API: `GET /api/repos/:owner/:name/checkouts`, `PATCH .../primary` and
+`DELETE .../checkouts` with an exact registered path, plus revision-guarded
+`POST /api/sessions/:sessionId/archive` with an `archived` boolean. Permanent session/repository
+deletion, moving linked worktrees between clones, and archive-driven disk cleanup remain deferred.
 
 Also on the first screen:
 - Preflight results (`gh` / `claude` / `codex` auth status)
@@ -734,7 +760,8 @@ Riskiest first. **Follow the order.**
 | 9B | CLI lifecycle | Background attach/start, singleton ownership, browser handoff, status/idle stop; Unix/WSL |
 | 9C | Same-session refresh/re-review | Whole latest PR diff, conservative anchors, revision guards, submitted history |
 | 9D | Code search | View-local literal finder, bounded pinned-HEAD grep, read-only result navigation |
-| Later | Entry and review follow-ups | Repository/session management, directory picker, native Windows, packaging, remote binding separately |
+| 9E | Repository/session management | Review filtering, reversible archive/restore, validated checkout management with dependency guards |
+| Later | Entry and review follow-ups | Permanent deletion, directory picker, native Windows, packaging, remote binding separately |
 
 **Step 3 will take twice as long as expected.** A diff viewer with inline widgets is universally underestimated until you build one. If it stalls, dropping side-by-side and shipping unified only is the escape hatch.
 
