@@ -56,6 +56,60 @@ function renderEntry(path = '/') {
 }
 
 describe('Review entry screens', () => {
+  it('confirms permanent local review deletion and repository unregistration separately', async () => {
+    let sessions = [
+      {
+        id: 'archived',
+        repoId: repo.id,
+        prNumber: 42,
+        createdAt: '2026-09-20',
+        archivedAt: '2026-09-21',
+        config: { main: { backend: 'claude' } },
+        pullRequest: { title: 'Old review' },
+      },
+    ]
+    let repos = [repo]
+    const calls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, options?: RequestInit) => {
+        const url = String(input)
+        if (options?.method === 'DELETE') {
+          calls.push(url)
+          if (url.endsWith('/delete')) sessions = []
+          else repos = []
+          return new Response(null, { status: 204 })
+        }
+        if (url === '/api/repos') return json(repos)
+        if (url === '/api/sessions') return json(sessions)
+        if (url === '/api/preflight') return json(preflight)
+        if (url.endsWith('/checkouts'))
+          return json({
+            repo,
+            checkouts: [{ path: repo.primaryCheckout, available: true }],
+            sessionCount: sessions.length,
+          })
+        throw new Error(`Unexpected request: ${url}`)
+      }),
+    )
+    const user = userEvent.setup()
+    renderEntry()
+    await screen.findByRole('heading', { name: 'Recent reviews' })
+    await user.selectOptions(screen.getByLabelText('Review status'), 'archived')
+    await screen.findByText('Old review')
+    await user.click(screen.getByRole('button', { name: 'Delete' }))
+    expect(calls).toEqual([])
+    await user.click(screen.getByRole('button', { name: 'Confirm delete' }))
+    await screen.findByText('No reviews yet')
+    await user.click(screen.getByRole('button', { name: 'Manage checkouts' }))
+    await screen.findByText('0 saved reviews, including archived reviews.')
+    await user.click(screen.getByRole('button', { name: 'Remove repository registration' }))
+    expect(calls).toEqual(['/api/sessions/archived/delete'])
+    await user.click(screen.getByRole('button', { name: 'Confirm remove repository' }))
+    await screen.findByText('No repositories registered.')
+    expect(calls).toEqual(['/api/sessions/archived/delete', '/api/repos/owner/repo'])
+  })
+
   it('browses directories, moves up, and registers a Git leaf without starting an agent', async () => {
     const registered: string[] = []
     const fetcher = vi.fn(async (input: string | URL | Request, options?: RequestInit) => {

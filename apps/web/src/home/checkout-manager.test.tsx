@@ -40,7 +40,7 @@ it('changes primary and confirms registration-only removal without deleting file
     }),
   )
   const user = userEvent.setup()
-  render(<CheckoutManager repo={repo} onClose={() => undefined} />)
+  render(<CheckoutManager repo={repo} onClose={() => undefined} onRemoved={() => undefined} />)
   await user.click(await screen.findByRole('button', { name: 'Make primary' }))
   await waitFor(() =>
     expect(screen.getByText('/second').closest('li')?.textContent).toContain('Primary'),
@@ -79,7 +79,7 @@ it('shows unavailable paths, blocks dependent primary changes and handles failed
     ),
   )
   const user = userEvent.setup()
-  render(<CheckoutManager repo={repo} onClose={() => undefined} />)
+  render(<CheckoutManager repo={repo} onClose={() => undefined} onRemoved={() => undefined} />)
   expect(await screen.findByText('Checkout disappeared')).toBeTruthy()
   expect(screen.getByRole('button', { name: 'Make primary' })).toHaveProperty('disabled', true)
   expect(screen.getByText(/2 saved reviews/u)).toBeTruthy()

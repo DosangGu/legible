@@ -50,6 +50,7 @@ export type DaemonEvent =
   | { type: 'daemon.snapshot'; payload: DaemonSnapshot }
   | { type: 'preflight.updated'; payload: PreflightReport }
   | { type: 'repo.updated'; payload: Repo }
+  | { type: 'repo.removed'; payload: { id: string } }
   | { type: 'session.added'; payload: ReviewSession }
   | { type: 'session.updated'; payload: ReviewSession }
   | { type: 'session.removed'; payload: { id: string } }

@@ -1541,6 +1541,11 @@ button {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+.managed-review-row > .checkout-confirm {
+  flex-basis: 100%;
 }
 
 .managed-review-row .review-row {

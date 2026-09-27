@@ -110,6 +110,10 @@ function isReviewSession(value: unknown): value is ReviewSession {
     typeof value.createdAt === 'string' &&
     (value.archivedAt === undefined ||
       (typeof value.archivedAt === 'string' && Number.isFinite(Date.parse(value.archivedAt)))) &&
+    (value.deletionRequestedAt === undefined ||
+      (typeof value.deletionRequestedAt === 'string' &&
+        Number.isFinite(Date.parse(value.deletionRequestedAt)) &&
+        typeof value.archivedAt === 'string')) &&
     (value.reviewRevision === undefined || isRevision(value.reviewRevision)) &&
     (value.baseTipSha === undefined || typeof value.baseTipSha === 'string') &&
     (value.baseRef === undefined || typeof value.baseRef === 'string') &&

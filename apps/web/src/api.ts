@@ -236,6 +236,10 @@ export function forgetCheckout(repo: Repo, path: string): Promise<Repo> {
   return request(`${repoUrl(repo)}/checkouts`, { method: 'DELETE', body: JSON.stringify({ path }) })
 }
 
+export function unregisterRepo(repo: Repo): Promise<void> {
+  return request(repoUrl(repo), { method: 'DELETE' })
+}
+
 function repoUrl(repo: Repo): string {
   return `/api/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}`
 }
@@ -244,6 +248,13 @@ export function archiveSession(session: ReviewSession, archived: boolean): Promi
   return request(`/api/sessions/${encodeURIComponent(session.id)}/archive`, {
     method: 'POST',
     body: JSON.stringify({ archived }),
+    headers: revisionHeaders(session.reviewRevision ?? 0),
+  })
+}
+
+export function deleteArchivedSession(session: ReviewSession): Promise<void> {
+  return request(`/api/sessions/${encodeURIComponent(session.id)}/delete`, {
+    method: 'DELETE',
     headers: revisionHeaders(session.reviewRevision ?? 0),
   })
 }

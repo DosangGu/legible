@@ -1,15 +1,24 @@
 import { useCallback, useState } from 'react'
 import type { Repo } from '@legible/protocol'
-import { fetchCheckouts, forgetCheckout, setPrimaryCheckout } from '../api.js'
+import { fetchCheckouts, forgetCheckout, setPrimaryCheckout, unregisterRepo } from '../api.js'
 import { LoadError } from './shell.js'
 import { useResource } from './use-resource.js'
 
-export function CheckoutManager({ repo, onClose }: { repo: Repo; onClose(): void }) {
+export function CheckoutManager({
+  repo,
+  onClose,
+  onRemoved,
+}: {
+  repo: Repo
+  onClose(): void
+  onRemoved(): void
+}) {
   const load = useCallback((signal: AbortSignal) => fetchCheckouts(repo, signal), [repo])
   const state = useResource(`checkouts:${repo.id}`, load)
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState('')
   const [forgetting, setForgetting] = useState<string>()
+  const [unregistering, setUnregistering] = useState(false)
   const act = async (operation: () => Promise<unknown>) => {
     setBusy(true)
     setFailure('')
@@ -113,6 +122,38 @@ export function CheckoutManager({ repo, onClose }: { repo: Repo; onClose(): void
           <button type="button" disabled={busy} onClick={state.reload}>
             Check paths again
           </button>
+          {unregistering ? (
+            <div className="checkout-confirm" role="group" aria-label="Confirm repository removal">
+              <p>
+                Remove {repo.id} from Legible? This only deletes its registration. The checkout
+                stays on disk.
+              </p>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() =>
+                  void act(async () => {
+                    await unregisterRepo(repo)
+                    onRemoved()
+                    onClose()
+                  })
+                }
+              >
+                Confirm remove repository
+              </button>{' '}
+              <button type="button" disabled={busy} onClick={() => setUnregistering(false)}>
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              disabled={busy || Boolean(state.data.primaryChangeBlocked)}
+              onClick={() => setUnregistering(true)}
+            >
+              Remove repository registration
+            </button>
+          )}
         </>
       )}
     </section>

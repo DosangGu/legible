@@ -29,6 +29,72 @@ async function client(runtime: DaemonRuntime) {
 }
 
 describe('Review entry API', () => {
+  it('permanently deletes an archived local review before unregistering its repository', async () => {
+    const f = await repositoryFixture()
+    cleanups.push(() => rm(f.root, { recursive: true, force: true }))
+    const runtime = await createDaemon({
+      version: 'test',
+      stateDirectory: f.stateDirectory,
+      browseRoot: f.root,
+      runner: f.runner,
+      pullRequestReader: {
+        listPullRequests: async () => ({ items: [], page: 1, hasNextPage: false }),
+        getPullRequest: async () => f.pull,
+      },
+    })
+    cleanups.push(() => runtime.app.close())
+    const send = await client(runtime)
+    await runtime.services.repos.register(f.checkout)
+    const { session } = await runtime.services.openReviews.open({
+      repoId: 'owner/repo',
+      prNumber: 42,
+      config,
+    })
+    const deleteUrl = `/api/sessions/${session.id}/delete`
+    expect((await send({ method: 'DELETE', url: deleteUrl })).statusCode).toBe(409)
+    expect((await send({ method: 'DELETE', url: '/api/repos/owner/repo' })).statusCode).toBe(409)
+    await send({
+      method: 'POST',
+      url: `/api/sessions/${session.id}/archive`,
+      payload: { archived: true },
+    })
+    expect(
+      (
+        await send({
+          method: 'DELETE',
+          url: deleteUrl,
+          headers: { 'x-legible-review-revision': '99' },
+        })
+      ).statusCode,
+    ).toBe(409)
+    const untracked = join(session.worktreePath, 'do-not-delete.txt')
+    await writeFile(untracked, 'Keep this change')
+    expect((await send({ method: 'DELETE', url: deleteUrl })).json()).toMatchObject({
+      error: { code: 'worktree_dirty' },
+    })
+    expect(
+      await access(untracked).then(
+        () => true,
+        () => false,
+      ),
+    ).toBe(true)
+    expect((await send({ url: `/api/sessions/${session.id}` })).json()).toMatchObject({
+      deletionRequestedAt: expect.any(String),
+    })
+    await rm(untracked)
+    expect((await send({ method: 'DELETE', url: deleteUrl })).statusCode).toBe(204)
+    expect(
+      await access(session.worktreePath).then(
+        () => true,
+        () => false,
+      ),
+    ).toBe(false)
+    expect((await send({ url: '/api/sessions' })).json()).toEqual([])
+    expect((await send({ method: 'DELETE', url: '/api/repos/owner/repo' })).statusCode).toBe(204)
+    expect((await send({ url: '/api/repos' })).json()).toEqual([])
+    expect(await git(f.checkout, 'rev-parse', 'HEAD')).toBe(f.pull.headSha)
+  })
+
   it('authenticates management, guards revisions and restores archived reviews without deleting worktrees', async () => {
     const f = await repositoryFixture()
     cleanups.push(() => rm(f.root, { recursive: true, force: true }))

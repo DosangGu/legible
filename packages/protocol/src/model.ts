@@ -36,6 +36,7 @@ export type ReviewSession = {
   createdAt: string
   lastOpenedAt?: string
   archivedAt?: string
+  deletionRequestedAt?: string
   pullRequest?: { title: string; url: string }
 }
 

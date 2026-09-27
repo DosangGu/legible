@@ -97,6 +97,9 @@ async function configureDaemon(options: StartDaemonOptions) {
     const configRecovery = await services.configProjection.recover()
     await services.persistence.restore()
     restored = true
+    const deletionFailures = await services.sessionManagement.recoverDeletions()
+    if (deletionFailures.length > 0)
+      app.log.warn({ deletionFailures }, 'Some pending review deletions require retry')
     await services.preflight.refresh()
     if (options.repoPath) await services.repos.register(options.repoPath).catch(() => undefined)
     for (const session of services.sessions.list()) {

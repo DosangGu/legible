@@ -96,6 +96,9 @@ no linked worktrees in the old primary. An unavailable primary must be restored 
 The primary itself cannot be forgotten; choose another primary first. Registry updates and review
 preparation are serialized so an in-flight review cannot lose its checkout.
 
+When no reviews or linked worktrees depend on a repository, **Remove repository registration**
+removes it from Legible without deleting its local checkout.
+
 The registry and sessions are saved under `$XDG_STATE_HOME/legible`, falling back to
 `~/.local/state/legible`. Existing session files remain readable; register their matching checkout
 before requesting worktree cleanup. Permanent repository/session deletion,
@@ -126,7 +129,10 @@ block archiving. Archived sessions reject review operations until restored.
 Use **Restore**, or open an archived item to restore and reopen the same session. A direct archived
 review URL shows a restore screen first. Restoring never fetches new commits or starts an agent.
 Visibility is saved before broadcasting updates and survives restarts; old session records without
-`archivedAt` remain active. No permanent deletion or additional automatic cleanup is introduced.
+`archivedAt` remain active. **Delete** on an archived review asks for confirmation, then removes its
+local record, conversation and clean managed worktree. It never deletes the GitHub review or local
+repository checkout. Dirty or unsafe worktrees block deletion; the pending request stays visible
+for retry, including after a daemon restart.
 
 ### Refresh and review again
 
@@ -256,6 +262,8 @@ rendered review revision. `/open` also restores archived sessions. Lists and sna
 records so clients can filter them. `GET /api/repos/:owner/:name/checkouts` reports validated path
 availability and dependency restrictions; `PATCH .../primary` and `DELETE .../checkouts` take an exact
 registered `{ "path": "..." }`. All management routes require the existing browser authentication.
+`DELETE /api/sessions/:sessionId/delete` requires the rendered revision and a previously archived
+review. `DELETE /api/repos/:owner/:name` removes only an unused repository registration.
 
 Open `/review/:sessionId` in the web app to view a unified, read-only CodeMirror diff. Changed-file
 navigation, left/right line anchors, whole-file context, loading, empty, binary, and API error states

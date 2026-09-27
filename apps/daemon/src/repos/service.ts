@@ -176,6 +176,23 @@ export class RepositoryService {
     })
   }
 
+  /** Remove only Legible's registration; never modify the checkout itself. */
+  unregister(id: string): Promise<void> {
+    return this.withLock(async () => {
+      const repo = this.get(id)
+      await this.#assertPrimaryChange(repo)
+      const next = new Map(this.#repos)
+      next.delete(repo.id)
+      try {
+        await writeState(this.#path, { version: 1, repos: [...next.values()] })
+      } catch {
+        throw new ServiceError('repo_store_failed', 'Unable to save the repository registry', 500)
+      }
+      this.#repos.delete(repo.id)
+      this.events.publish({ type: 'repo.removed', payload: { id: repo.id } })
+    })
+  }
+
   #assertRegistered(repo: Repo, path: string): void {
     if (!repo.checkouts.includes(path))
       throw new ServiceError(

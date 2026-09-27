@@ -28,6 +28,8 @@ export class SessionRegistry {
 
   assertMutable(id: string): void {
     this.assertCurrent(id)
+    if (this.get(id)?.deletionRequestedAt)
+      throw new ServiceError('review_deleting', 'This review is pending deletion', 409)
     if (this.get(id)?.archivedAt)
       throw new ServiceError(
         'review_archived',

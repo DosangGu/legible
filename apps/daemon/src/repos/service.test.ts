@@ -22,6 +22,40 @@ async function setup() {
 }
 
 describe('RepositoryService', () => {
+  it('unregisters an unused repository without touching its checkout', async () => {
+    const f = await setup()
+    await f.service.register(f.checkout)
+    await f.service.unregister('owner/repo')
+    expect(f.service.list()).toEqual([])
+    expect(await git(f.checkout, 'rev-parse', 'HEAD')).toBe(f.pull.headSha)
+    const restored = new RepositoryService(f.runner, f.events, {
+      stateDirectory: f.stateDirectory,
+      browseRoot: f.root,
+    })
+    await restored.restore()
+    expect(restored.list()).toEqual([])
+  })
+
+  it('refuses unregister while linked worktrees or saved reviews exist', async () => {
+    const f = await setup()
+    await f.service.register(f.checkout)
+    const protectedService = new RepositoryService(f.runner, f.events, {
+      stateDirectory: f.stateDirectory,
+      browseRoot: f.root,
+      sessionCount: () => 1,
+    })
+    await protectedService.restore()
+    await expect(protectedService.unregister('owner/repo')).rejects.toMatchObject({
+      code: 'repo_in_use',
+    })
+    const linked = join(f.root, 'linked')
+    await git(f.checkout, 'worktree', 'add', '--detach', linked, 'HEAD')
+    await expect(f.service.unregister('owner/repo')).rejects.toMatchObject({
+      code: 'repo_worktrees_in_use',
+    })
+    expect(f.service.list()).toHaveLength(1)
+  })
+
   async function secondCheckout(f: Awaited<ReturnType<typeof setup>>) {
     const second = join(f.root, 'second')
     await git(f.root, 'clone', f.bare, second)

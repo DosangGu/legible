@@ -136,6 +136,13 @@ export function ReviewPage() {
       </PageState>
     )
   }
+  if (diffState.session.deletionRequestedAt)
+    return (
+      <PageState
+        title="Review deletion pending"
+        detail="This local review is pending deletion. Return to the workspace to retry after resolving the cleanup issue."
+      />
+    )
   if (diffState.session.archivedAt) {
     return (
       <ArchivedReview

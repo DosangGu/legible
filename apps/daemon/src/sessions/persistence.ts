@@ -69,6 +69,13 @@ export class SessionPersistence {
     this.#errors.delete(session.id)
   }
 
+  /** Explicit deletion must finish on disk before the registry stops owning the session. */
+  async removeDurably(sessionId: string): Promise<void> {
+    this.#cancel(sessionId)
+    await this.#enqueueRemove(sessionId)
+    this.#errors.delete(sessionId)
+  }
+
   async suspend(sessionId: string): Promise<() => void> {
     this.#suspended.add(sessionId)
     this.#cancel(sessionId)

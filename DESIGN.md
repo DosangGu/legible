@@ -617,8 +617,13 @@ for nested worktree operations. Revalidate all dependencies inside the lock, nev
 
 Authenticated management API: `GET /api/repos/:owner/:name/checkouts`, `PATCH .../primary` and
 `DELETE .../checkouts` with an exact registered path, plus revision-guarded
-`POST /api/sessions/:sessionId/archive` with an `archived` boolean. Permanent session/repository
-deletion, moving linked worktrees between clones, and archive-driven disk cleanup remain deferred.
+`POST /api/sessions/:sessionId/archive` with an `archived` boolean. Confirmed permanent deletion
+requires an archived, idle review with no unresolved submission. Save a deletion intent before
+removing its clean, exactly owned worktree; then durably remove its session/chat record before
+publishing removal. A failed cleanup leaves the intent visible and locked for retry, and startup
+resumes pending intents before worktree sweeping. Repository unregistration requires zero saved
+sessions and no linked worktrees, and removes only registry metadata. Neither action deletes the
+primary checkout or any GitHub review. Moving linked worktrees between clones remains deferred.
 
 Also on the first screen:
 - Preflight results (`gh` / `claude` / `codex` auth status)

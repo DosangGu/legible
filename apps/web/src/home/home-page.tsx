@@ -9,6 +9,7 @@ import {
   registerRepo,
   touchSession,
   archiveSession,
+  deleteArchivedSession,
 } from '../api.js'
 import { HomeShell, LoadError } from './shell.js'
 import { useResource } from './use-resource.js'
@@ -38,11 +39,13 @@ export function HomePage() {
   const [statusFilter, setStatusFilter] = useState('active')
   const [managedRepo, setManagedRepo] = useState<Repo>()
   const [browsing, setBrowsing] = useState(false)
+  const [deleting, setDeleting] = useState<string>()
   const visibleSessions = (state.data?.sessions ?? [])
     .filter((session) => {
       if (repoFilter !== 'all' && session.repoId !== repoFilter) return false
       if (statusFilter === 'all') return true
       if (statusFilter === 'archived') return Boolean(session.archivedAt)
+      if (statusFilter === 'active' && session.deletionRequestedAt) return true
       if (session.archivedAt) return false
       if (statusFilter === 'draft') return !session.submission
       if (statusFilter === 'submitted') return session.submission?.status === 'submitted'
@@ -93,6 +96,7 @@ export function HomePage() {
             key={managedRepo.id}
             repo={managedRepo}
             onClose={() => setManagedRepo(undefined)}
+            onRemoved={state.reload}
           />
         </Suspense>
       )}
@@ -202,7 +206,7 @@ export function HomePage() {
                       <button
                         className="review-row"
                         type="button"
-                        disabled={busy}
+                        disabled={busy || Boolean(session.deletionRequestedAt)}
                         onClick={() =>
                           void act(async () => {
                             await touchSession(session.id)
@@ -220,33 +224,80 @@ export function HomePage() {
                           </span>
                         </span>
                         <span className="status-badge">
-                          {session.archivedAt
-                            ? 'Archived · open to restore'
-                            : (session.submission?.status ?? 'Draft')}
+                          {session.deletionRequestedAt
+                            ? 'Deletion pending · retry'
+                            : session.archivedAt
+                              ? 'Archived · open to restore'
+                              : (session.submission?.status ?? 'Draft')}
                         </span>
                       </button>
-                      <button
-                        type="button"
-                        className="review-archive-button"
-                        disabled={
-                          busy ||
-                          Boolean(
-                            !session.archivedAt &&
-                            session.submission &&
-                            (session.submission.status !== 'submitted' ||
-                              session.submission.cleanup.status !== 'complete'),
-                          )
-                        }
-                        aria-label={`${session.archivedAt ? 'Restore' : 'Archive'} ${session.pullRequest?.title ?? `review #${String(session.prNumber)}`}`}
-                        onClick={() =>
-                          void act(async () => {
-                            await archiveSession(session, !session.archivedAt)
-                            state.reload()
-                          })
-                        }
-                      >
-                        {session.archivedAt ? 'Restore' : 'Archive'}
-                      </button>
+                      {!session.deletionRequestedAt && (
+                        <button
+                          type="button"
+                          className="review-archive-button"
+                          disabled={
+                            busy ||
+                            Boolean(
+                              !session.archivedAt &&
+                              session.submission &&
+                              (session.submission.status !== 'submitted' ||
+                                session.submission.cleanup.status !== 'complete'),
+                            )
+                          }
+                          aria-label={`${session.archivedAt ? 'Restore' : 'Archive'} ${session.pullRequest?.title ?? `review #${String(session.prNumber)}`}`}
+                          onClick={() =>
+                            void act(async () => {
+                              await archiveSession(session, !session.archivedAt)
+                              state.reload()
+                            })
+                          }
+                        >
+                          {session.archivedAt ? 'Restore' : 'Archive'}
+                        </button>
+                      )}
+                      {session.archivedAt &&
+                        (deleting === session.id ? (
+                          <div
+                            className="checkout-confirm"
+                            role="group"
+                            aria-label="Confirm review deletion"
+                          >
+                            <p>
+                              Permanently delete this local review, chat and clean managed worktree?
+                              This cannot be undone. GitHub reviews and the repository checkout stay
+                              untouched.
+                            </p>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() =>
+                                void act(async () => {
+                                  await deleteArchivedSession(session)
+                                  setDeleting(undefined)
+                                  state.reload()
+                                })
+                              }
+                            >
+                              Confirm delete
+                            </button>{' '}
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => setDeleting(undefined)}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            className="review-archive-button"
+                            disabled={busy}
+                            onClick={() => setDeleting(session.id)}
+                          >
+                            {session.deletionRequestedAt ? 'Retry delete' : 'Delete'}
+                          </button>
+                        ))}
                     </li>
                   ))}
                 </ul>

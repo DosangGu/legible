@@ -4,6 +4,8 @@ import { ServiceError } from '../common/service-error.js'
 import type { SessionMutationQueue } from './mutation-queue.js'
 import type { SessionPersistence } from './persistence.js'
 import type { SessionRegistry } from './session-registry.js'
+import type { ReviewWorktrees } from '../worktrees/manager.js'
+import { DirtyWorktreeError, WorktreePathConflictError } from '../worktrees/service.js'
 
 /** Archiving changes visibility only; it never removes review data or worktrees. */
 export class SessionManagementService {
@@ -12,6 +14,7 @@ export class SessionManagementService {
     private readonly chats: ChatService,
     private readonly persistence: SessionPersistence,
     private readonly mutations: SessionMutationQueue,
+    private readonly worktrees: ReviewWorktrees,
     private readonly now: () => Date = () => new Date(),
   ) {}
 
@@ -31,6 +34,73 @@ export class SessionManagementService {
 
   open(id: string): Promise<ReviewSession> {
     return this.#update(id, false, true)
+  }
+
+  async deleteArchived(id: string): Promise<void> {
+    this.sessions.assertCurrent(id)
+    if (this.mutations.isPending(id))
+      throw new ServiceError(
+        'review_busy',
+        'Wait for the current review operation before deleting',
+        409,
+      )
+    await this.mutations.run(id, async () => {
+      this.sessions.assertCurrent(id)
+      const previous = this.sessions.get(id)
+      if (!previous) throw new ServiceError('session_not_found', 'Review session not found', 404)
+      if (!previous.archivedAt)
+        throw new ServiceError('review_not_archived', 'Archive this review before deleting it', 409)
+      this.#assertIdle(id)
+      const release = this.sessions.beginUpdate(id)
+      try {
+        if (!previous.deletionRequestedAt) {
+          const pending = { ...previous, deletionRequestedAt: this.now().toISOString() }
+          await this.persistence.save(pending).catch(() => {
+            throw new ServiceError(
+              'session_save_failed',
+              'Unable to save the deletion request; the review was preserved',
+              500,
+            )
+          })
+          this.sessions.replace(pending)
+        }
+        try {
+          await this.worktrees.remove(previous)
+        } catch (error) {
+          if (error instanceof DirtyWorktreeError)
+            throw new ServiceError(
+              'worktree_dirty',
+              'Review deletion is pending: clean or back up the worktree changes, then retry',
+              409,
+            )
+          if (error instanceof WorktreePathConflictError)
+            throw new ServiceError(
+              'worktree_path_conflict',
+              'Review deletion is pending: the managed worktree path is unsafe; no files were removed',
+              409,
+            )
+          throw error
+        }
+        await this.persistence.removeDurably(id)
+        this.sessions.remove(id)
+      } finally {
+        release()
+      }
+    })
+  }
+
+  /** Resume durable deletion intents after restoring repositories and sessions. */
+  async recoverDeletions(): Promise<Array<{ id: string; error: unknown }>> {
+    const failures: Array<{ id: string; error: unknown }> = []
+    for (const session of this.sessions.list()) {
+      if (!session.deletionRequestedAt) continue
+      try {
+        await this.deleteArchived(session.id)
+      } catch (error) {
+        failures.push({ id: session.id, error })
+      }
+    }
+    return failures
   }
 
   #assertIdle(id: string): void {
@@ -55,6 +125,8 @@ export class SessionManagementService {
       this.sessions.assertCurrent(id)
       const previous = this.sessions.get(id)
       if (!previous) throw new ServiceError('session_not_found', 'Review session not found', 404)
+      if (previous.deletionRequestedAt)
+        throw new ServiceError('review_deleting', 'This review is pending deletion', 409)
       if (archived) this.#assertIdle(id)
       const release =
         archived || previous.archivedAt ? this.sessions.beginUpdate(id) : () => undefined

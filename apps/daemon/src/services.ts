@@ -155,6 +155,7 @@ export function createDaemonServices(options: CreateServicesOptions): DaemonServ
     chats,
     persistence,
     mutations,
+    worktrees,
     options.now,
   )
   const openReviews = new OpenReviewService(

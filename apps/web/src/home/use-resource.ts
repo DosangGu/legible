@@ -13,6 +13,7 @@ export function useResource<T>(key: string, load: (signal: AbortSignal) => Promi
         if (
           [
             'repo.updated',
+            'repo.removed',
             'session.added',
             'session.updated',
             'session.removed',

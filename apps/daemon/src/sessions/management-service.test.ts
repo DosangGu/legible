@@ -63,6 +63,76 @@ async function setup() {
 }
 
 describe('Review visibility management', () => {
+  it('deletes only archived reviews after worktree cleanup and removes chat across restart', async () => {
+    const f = await setup()
+    const removeWorktree = vi.spyOn(f.services.worktrees, 'remove').mockResolvedValue(true)
+    await expect(f.services.sessionManagement.deleteArchived(f.session.id)).rejects.toMatchObject({
+      code: 'review_not_archived',
+    })
+    await f.services.sessionManagement.archive(f.session.id, true)
+    await f.services.sessionManagement.deleteArchived(f.session.id)
+    expect(removeWorktree).toHaveBeenCalledWith(expect.objectContaining({ id: f.session.id }))
+    expect(f.services.sessions.get(f.session.id)).toBeUndefined()
+    expect(await new SessionStore(f.stateDirectory).loadAll()).toEqual([])
+    await f.services.persistence.close()
+    const second = createDaemonServices({ stateDirectory: f.stateDirectory })
+    instances.push(second)
+    await second.persistence.restore()
+    expect(second.sessions.list()).toEqual([])
+  })
+
+  it('keeps a durable deletion intent after worktree failure and resumes it after restart', async () => {
+    const f = await setup()
+    await f.services.sessionManagement.archive(f.session.id, true)
+    vi.spyOn(f.services.worktrees, 'remove').mockRejectedValue(new Error('dirty worktree'))
+    await expect(f.services.sessionManagement.deleteArchived(f.session.id)).rejects.toThrow(
+      'dirty worktree',
+    )
+    const pending = f.services.sessions.get(f.session.id)
+    expect(pending?.deletionRequestedAt).toBeTruthy()
+    expect((await new SessionStore(f.stateDirectory).loadAll())[0]?.session).toEqual(pending)
+    await expect(f.services.sessionManagement.open(f.session.id)).rejects.toMatchObject({
+      code: 'review_deleting',
+    })
+    await f.services.persistence.close()
+    const second = createDaemonServices({ stateDirectory: f.stateDirectory })
+    instances.push(second)
+    await second.persistence.restore()
+    vi.spyOn(second.worktrees, 'remove').mockResolvedValue(false)
+    expect(await second.sessionManagement.recoverDeletions()).toEqual([])
+    expect(second.sessions.get(f.session.id)).toBeUndefined()
+    expect(await new SessionStore(f.stateDirectory).loadAll()).toEqual([])
+  })
+
+  it('preserves an archived review if the deletion intent cannot be saved', async () => {
+    const f = await setup()
+    await f.services.sessionManagement.archive(f.session.id, true)
+    vi.spyOn(f.services.persistence, 'save').mockRejectedValueOnce(new Error('disk full'))
+    const removeWorktree = vi.spyOn(f.services.worktrees, 'remove')
+    await expect(f.services.sessionManagement.deleteArchived(f.session.id)).rejects.toMatchObject({
+      code: 'session_save_failed',
+    })
+    expect(removeWorktree).not.toHaveBeenCalled()
+    expect(f.services.sessions.get(f.session.id)?.deletionRequestedAt).toBeUndefined()
+  })
+
+  it('keeps the deletion intent if record removal fails after worktree cleanup', async () => {
+    const f = await setup()
+    await f.services.sessionManagement.archive(f.session.id, true)
+    const removeWorktree = vi.spyOn(f.services.worktrees, 'remove').mockResolvedValue(false)
+    vi.spyOn(f.services.persistence, 'removeDurably').mockRejectedValueOnce(new Error('disk error'))
+    await expect(f.services.sessionManagement.deleteArchived(f.session.id)).rejects.toThrow(
+      'disk error',
+    )
+    expect(f.services.sessions.get(f.session.id)?.deletionRequestedAt).toBeTruthy()
+    expect(
+      (await new SessionStore(f.stateDirectory).loadAll())[0]?.session.deletionRequestedAt,
+    ).toBeTruthy()
+    await f.services.sessionManagement.deleteArchived(f.session.id)
+    expect(removeWorktree).toHaveBeenCalledTimes(2)
+    expect(await new SessionStore(f.stateDirectory).loadAll()).toEqual([])
+  })
+
   it('persists archive state and conversation across restart, then reopens the same pinned session', async () => {
     const f = await setup()
     const archived = await f.services.sessionManagement.archive(f.session.id, true)

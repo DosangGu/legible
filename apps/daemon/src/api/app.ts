@@ -92,7 +92,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       if (typeof raw !== 'string' || !/^\d+$/u.test(raw) || !Number.isSafeInteger(revision))
         throw new ServiceError('invalid_review_revision', 'Invalid review revision')
       return options.services.sessions.withRevision(sessionId, revision, () => {
-        if (route.url.endsWith('/archive')) options.services.sessions.assertCurrent(sessionId)
+        if (route.url.endsWith('/archive') || route.url.endsWith('/delete'))
+          options.services.sessions.assertCurrent(sessionId)
         else options.services.sessions.assertMutable(sessionId)
         return handler.call(this, request, reply)
       })
@@ -152,6 +153,13 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
         checkoutPath(request.body),
       ),
   )
+  app.delete<{ Params: { owner: string; name: string } }>(
+    '/api/repos/:owner/:name',
+    async (request, reply) => {
+      await options.services.repos.unregister(`${request.params.owner}/${request.params.name}`)
+      return reply.code(204).send()
+    },
+  )
   app.get<{ Params: { owner: string; name: string }; Querystring: { page?: string } }>(
     '/api/repos/:owner/:name/pulls',
     async (request) => {
@@ -180,6 +188,13 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
         request.params.sessionId,
         parsed.data.archived,
       )
+    },
+  )
+  app.delete<{ Params: { sessionId: string } }>(
+    '/api/sessions/:sessionId/delete',
+    async (request, reply) => {
+      await options.services.sessionManagement.deleteArchived(request.params.sessionId)
+      return reply.code(204).send()
     },
   )
 
