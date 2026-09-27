@@ -1,10 +1,11 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import type { PullRequestDetails } from '../github/client.js'
 import { NodeCommandRunner, type CommandRunner } from '../preflight/command-runner.js'
+import { createCanonicalTempDirectory } from './temp-directory.js'
 
 const exec = promisify(execFile)
 export async function git(cwd: string, ...args: string[]): Promise<string> {
@@ -13,7 +14,7 @@ export async function git(cwd: string, ...args: string[]): Promise<string> {
 
 /** A real local Git remote; the runner substitutes it for origin only during fetch. */
 export async function repositoryFixture(repoId = 'owner/repo', parent = tmpdir()) {
-  const root = await mkdtemp(join(parent, 'legible-repository-'))
+  const root = await createCanonicalTempDirectory('legible-repository-', parent)
   const checkout = join(root, 'checkout')
   const bare = join(root, 'remote.git')
   const stateDirectory = join(root, 'state')

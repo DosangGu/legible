@@ -1,7 +1,7 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { createCanonicalTempDirectory } from '../testing/temp-directory.js'
 import { DirectoryBrowser } from './directory-browser.js'
 
 const roots: string[] = []
@@ -10,8 +10,8 @@ afterEach(async () => {
 })
 
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), 'legible-browser-'))
-  const outside = await mkdtemp(join(tmpdir(), 'legible-outside-'))
+  const root = await createCanonicalTempDirectory('legible-browser-')
+  const outside = await createCanonicalTempDirectory('legible-outside-')
   roots.push(root, outside)
   const projects = join(root, 'projects')
   const checkout = join(projects, 'checkout')

@@ -3,7 +3,6 @@ import { promisify } from 'node:util'
 import {
   lstat,
   mkdir,
-  mkdtemp,
   readFile,
   readdir,
   rm,
@@ -12,10 +11,10 @@ import {
   unlink,
   writeFile,
 } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
+import { createCanonicalTempDirectory } from '../testing/temp-directory.js'
 
 import {
   ConfigProjectionError,
@@ -218,7 +217,7 @@ type Fixture = {
 }
 
 async function createFixture(): Promise<Fixture> {
-  const root = await mkdtemp(join(tmpdir(), 'legible-config-projection-'))
+  const root = await createCanonicalTempDirectory('legible-config-projection-')
   roots.push(root)
   const repo = join(root, 'repo')
   const stateDirectory = join(root, 'state')

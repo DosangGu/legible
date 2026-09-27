@@ -1,12 +1,12 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, mkdir, rm, symlink, unlink, utimes, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, rm, symlink, unlink, utimes, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { CommandResult, CommandRunner } from '../preflight/command-runner.js'
+import { createCanonicalTempDirectory } from '../testing/temp-directory.js'
 import {
   DirtyWorktreeError,
   InvalidPullRequestError,
@@ -190,7 +190,7 @@ function makeService(): WorktreeService {
 }
 
 async function createGitFixture(): Promise<GitFixture> {
-  const root = await mkdtemp(join(tmpdir(), 'legible-worktree-'))
+  const root = await createCanonicalTempDirectory('legible-worktree-')
   const bare = join(root, 'remote-owner', 'repo.git')
   const seed = join(root, 'seed')
   const checkout = join(root, 'checkout')
