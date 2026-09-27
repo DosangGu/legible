@@ -16,6 +16,9 @@ import { useResource } from './use-resource.js'
 const CheckoutManager = lazy(async () => ({
   default: (await import('./checkout-manager.js')).CheckoutManager,
 }))
+const DirectoryPicker = lazy(async () => ({
+  default: (await import('./directory-picker.js')).DirectoryPicker,
+}))
 
 const loadHome = async (signal: AbortSignal) => {
   const [repos, sessions, preflight] = await Promise.all([
@@ -34,6 +37,7 @@ export function HomePage() {
   const [repoFilter, setRepoFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState('active')
   const [managedRepo, setManagedRepo] = useState<Repo>()
+  const [browsing, setBrowsing] = useState(false)
   const visibleSessions = (state.data?.sessions ?? [])
     .filter((session) => {
       if (repoFilter !== 'all' && session.repoId !== repoFilter) return false
@@ -59,12 +63,16 @@ export function HomePage() {
       setBusy(false)
     }
   }
-  const register = (event: FormEvent) => {
-    event.preventDefault()
+  const openRepository = (selectedPath: string) => {
+    setPath(selectedPath)
     void act(async () => {
-      const repo = await registerRepo(path.trim())
+      const repo = await registerRepo(selectedPath)
       navigate(`/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}`)
     })
+  }
+  const register = (event: FormEvent) => {
+    event.preventDefault()
+    openRepository(path.trim())
   }
   return (
     <HomeShell>
@@ -114,6 +122,23 @@ export function HomePage() {
                   {busy ? 'Working…' : 'Open repository'}
                 </button>
               </form>
+              <button
+                type="button"
+                className="browse-button"
+                disabled={busy}
+                onClick={() => setBrowsing((value) => !value)}
+              >
+                {browsing ? 'Hide browser' : 'Browse folders'}
+              </button>
+              {browsing && (
+                <Suspense fallback={<p role="status">Loading directory browser…</p>}>
+                  <DirectoryPicker
+                    busy={busy}
+                    onClose={() => setBrowsing(false)}
+                    onSelect={openRepository}
+                  />
+                </Suspense>
+              )}
             </section>
             <section className="home-card">
               <div className="section-heading">

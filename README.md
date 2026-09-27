@@ -98,9 +98,22 @@ preparation are serialized so an in-flight review cannot lose its checkout.
 
 The registry and sessions are saved under `$XDG_STATE_HOME/legible`, falling back to
 `~/.local/state/legible`. Existing session files remain readable; register their matching checkout
-before requesting worktree cleanup. The folder picker, permanent repository/session deletion,
+before requesting worktree cleanup. Permanent repository/session deletion,
 subordinate agents, automatic SSH tunnels, and OS service/autostart installation are not
 implemented yet. No package is published by this implementation.
+
+### Directory picker
+
+Choose **Browse folders** on the workspace home screen to find a checkout beneath
+`LEGIBLE_BROWSE_ROOT`. You can still paste an absolute path. The picker lists directory names only,
+hides hidden folders, `node_modules`, `target`, and symlink entries, and stops at directories containing
+`.git`. Choosing a Git folder registers it through the same checkout and GitHub origin checks as the
+path input; a linked worktree or unsupported origin will show an error. The returned repository name
+comes from the verified `origin` remote.
+
+Each listing shows at most 200 directories after scanning at most 2,000 entries. If the list is
+limited, paste a known path. The picker stays within the configured root and cannot open files or
+browse below a Git checkout. If the browse root changes, restart the daemon before using it.
 
 ### Saved review management
 
@@ -232,6 +245,11 @@ and truncation/skipped-file information. `GET .../search/file?path=...` opens a 
 blob, including files outside the diff. Both use the same browser authentication and review revision
 header; neither accepts a caller-provided SHA or filesystem root. The existing `/file` endpoint and
 comment validation remain diff-restricted. HTTP cancellation stops the active search Git process.
+
+`GET /api/directories` starts at the configured browse root. An optional absolute `path` query lists
+one child directory with `root`, `path`, `parent`, `repository`, directory-only `entries`, and
+`truncated`. It uses the existing browser authentication; registration still goes through
+`POST /api/repos` and independently revalidates the selected path.
 
 `POST /api/sessions/:sessionId/archive` accepts `{ "archived": true | false }` and requires the
 rendered review revision. `/open` also restores archived sessions. Lists and snapshots include archived

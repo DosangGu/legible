@@ -120,6 +120,12 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   app.get('/api/sessions', async () => options.services.sessions.list())
 
   app.get('/api/repos', async () => options.services.repos.list())
+  app.get<{ Querystring: { path?: unknown } }>('/api/directories', (request) => {
+    const path = request.query.path
+    if (path !== undefined && typeof path !== 'string')
+      throw new ServiceError('invalid_directory_path', 'Choose one absolute directory path')
+    return options.services.directoryBrowser.list(path)
+  })
   app.post<{ Body: { path?: unknown } }>('/api/repos', async (request, reply) => {
     if (typeof request.body?.path !== 'string' || request.body.path.length > 4096)
       throw new ServiceError('invalid_repo_path', 'Enter an absolute repository path')

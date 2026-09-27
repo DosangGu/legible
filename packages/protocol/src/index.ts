@@ -1,5 +1,6 @@
 export { AgentBackendKind } from './model.js'
 export type { CodeSearchMatch, CodeSearchResult } from './search.js'
+export type { DirectoryEntry, DirectoryListing } from './directory.js'
 
 export type {
   AgentSpec,

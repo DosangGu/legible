@@ -21,6 +21,7 @@ import { SessionMutationQueue } from './sessions/mutation-queue.js'
 import { SessionStore } from './sessions/store.js'
 import { WorktreeManager } from './worktrees/manager.js'
 import { RepositoryService } from './repos/service.js'
+import { DirectoryBrowser } from './repos/directory-browser.js'
 import { OpenReviewService } from './sessions/open-service.js'
 import { WorktreeConfigProjection } from './worktrees/config-projection.js'
 import { SubmissionService } from './submissions/service.js'
@@ -32,6 +33,7 @@ import { SessionManagementService } from './sessions/management-service.js'
 export type DaemonServices = {
   repoPath?: string
   repos: RepositoryService
+  directoryBrowser: DirectoryBrowser
   pullRequests: PullRequestReader
   openReviews: OpenReviewService
   sessionManagement: SessionManagementService
@@ -147,6 +149,7 @@ export function createDaemonServices(options: CreateServicesOptions): DaemonServ
   mcpHolder.server = reviewMcp
   const github = new OctokitGitHubClient(runner)
   const pullRequests = options.pullRequestReader ?? github
+  const directoryBrowser = new DirectoryBrowser(options.browseRoot)
   const sessionManagement = new SessionManagementService(
     sessions,
     chats,
@@ -178,6 +181,7 @@ export function createDaemonServices(options: CreateServicesOptions): DaemonServ
   return {
     ...(options.repoPath ? { repoPath: options.repoPath } : {}),
     repos,
+    directoryBrowser,
     pullRequests,
     openReviews,
     sessionManagement,

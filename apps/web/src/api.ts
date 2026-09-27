@@ -18,6 +18,7 @@ import type {
   ReviewUpdate,
   RefreshReviewResponse,
   CodeSearchResult,
+  DirectoryListing,
 } from '@legible/protocol'
 
 export class ApiClientError extends Error {
@@ -214,6 +215,13 @@ function chatCommand(
 
 export function fetchRepos(signal?: AbortSignal): Promise<Repo[]> {
   return request('/api/repos', signal ? { signal } : {})
+}
+
+export function fetchDirectories(path?: string, signal?: AbortSignal): Promise<DirectoryListing> {
+  return request(
+    `/api/directories${path === undefined ? '' : `?${new URLSearchParams({ path }).toString()}`}`,
+    signal ? { signal } : {},
+  )
 }
 
 export function fetchCheckouts(repo: Repo, signal?: AbortSignal): Promise<RepositoryDetails> {

@@ -56,6 +56,109 @@ function renderEntry(path = '/') {
 }
 
 describe('Review entry screens', () => {
+  it('browses directories, moves up, and registers a Git leaf without starting an agent', async () => {
+    const registered: string[] = []
+    const fetcher = vi.fn(async (input: string | URL | Request, options?: RequestInit) => {
+      const url = String(input)
+      if (url === '/api/repos' && !options?.method) return json([])
+      if (url === '/api/sessions') return json([])
+      if (url === '/api/preflight') return json(preflight)
+      if (url.startsWith('/api/directories')) {
+        const path = new URL(url, 'http://localhost').searchParams.get('path')
+        return json(
+          path === '/home/test/projects'
+            ? {
+                root: '/home/test',
+                path,
+                parent: '/home/test',
+                repository: false,
+                entries: [
+                  { name: 'checkout', path: '/home/test/projects/checkout', repository: true },
+                ],
+                truncated: false,
+              }
+            : {
+                root: '/home/test',
+                path: '/home/test',
+                repository: false,
+                entries: [{ name: 'projects', path: '/home/test/projects', repository: false }],
+                truncated: false,
+              },
+        )
+      }
+      if (url === '/api/repos' && options?.method === 'POST') {
+        registered.push((JSON.parse(String(options.body)) as { path: string }).path)
+        return json(repo, 201)
+      }
+      return json({ page: 1, items: [], hasNextPage: false })
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const user = userEvent.setup()
+    renderEntry()
+    await user.click(await screen.findByRole('button', { name: 'Browse folders' }))
+    await user.click(await screen.findByRole('button', { name: 'Open folder projects' }))
+    expect(await screen.findByRole('button', { name: 'Open repository checkout' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Up one folder' }))
+    await screen.findByRole('button', { name: 'Open folder projects' })
+    await user.click(screen.getByRole('button', { name: 'Open folder projects' }))
+    await user.click(await screen.findByRole('button', { name: 'Open repository checkout' }))
+    expect(await screen.findByRole('heading', { name: 'owner/repo' })).toBeTruthy()
+    expect(registered).toEqual(['/home/test/projects/checkout'])
+    expect(fetcher.mock.calls.some(([input]) => String(input).includes('/chat/start'))).toBe(false)
+  })
+
+  it('retries a failed browse and keeps the chosen path visible if registration is rejected', async () => {
+    let attempts = 0
+    let attemptedPath = ''
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, options?: RequestInit) => {
+        const url = String(input)
+        if (url === '/api/repos' && options?.method === 'POST') {
+          attemptedPath = (JSON.parse(String(options.body)) as { path: string }).path
+          return json(
+            { error: { code: 'unsupported_checkout', message: 'Register a regular clone' } },
+            400,
+          )
+        }
+        if (url === '/api/repos' || url === '/api/sessions') return json([])
+        if (url === '/api/preflight') return json(preflight)
+        if (url.startsWith('/api/directories')) {
+          if (++attempts === 1)
+            return json(
+              {
+                error: { code: 'directory_unavailable', message: 'Folder temporarily unavailable' },
+              },
+              404,
+            )
+          return json({
+            root: '/home/test',
+            path: '/home/test',
+            repository: false,
+            entries: [{ name: 'linked ', path: '/home/test/linked ', repository: true }],
+            truncated: true,
+          })
+        }
+        return json({ page: 1, items: [], hasNextPage: false })
+      }),
+    )
+    const user = userEvent.setup()
+    renderEntry()
+    await user.click(await screen.findByRole('button', { name: 'Browse folders' }))
+    expect(await screen.findByText('Folder temporarily unavailable')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Retry browsing' }))
+    expect(await screen.findByText(/Directory listing is limited/u)).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: /Open repository linked/u }))
+    expect(await screen.findByRole('alert')).toHaveProperty(
+      'textContent',
+      'Register a regular clone',
+    )
+    expect((screen.getByLabelText('Repository path') as HTMLInputElement).value).toBe(
+      '/home/test/linked ',
+    )
+    expect(attemptedPath).toBe('/home/test/linked ')
+    expect(screen.getByRole('button', { name: /Open repository linked/u })).toBeTruthy()
+  })
   it('filters reviews, archives and restores without starting an agent, and preserves the selected filter', async () => {
     const sessions = [
       {

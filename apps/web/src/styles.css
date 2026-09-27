@@ -254,6 +254,57 @@ button {
 .path-form .primary-button {
   flex-shrink: 0;
 }
+.browse-button {
+  margin-top: 12px;
+}
+.directory-picker {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-0);
+}
+.directory-picker h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+.directory-picker > .section-heading {
+  flex-wrap: wrap;
+}
+.directory-picker > .section-heading button {
+  white-space: nowrap;
+}
+.directory-location,
+.directory-name {
+  overflow-wrap: anywhere;
+}
+.directory-location {
+  margin: 12px 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.directory-actions,
+.directory-found {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.directory-list {
+  max-height: 260px;
+  overflow: auto;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.directory-list li + li {
+  border-top: 1px solid var(--border);
+}
+.directory-list button {
+  width: 100%;
+  text-align: left;
+}
 .home-empty {
   text-align: center;
   padding: 36px 12px;

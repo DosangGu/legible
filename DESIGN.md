@@ -624,7 +624,7 @@ Also on the first screen:
 - Preflight results (`gh` / `claude` / `codex` auth status)
 - A direct path input — users arriving over SSH prefer pasting to clicking
 
-### Future directory picker
+### Directory picker
 
 Do not build a general-purpose file browser. That turns the daemon into a remote file explorer, and one leaked token exposes the entire home directory instead of a review tool.
 
@@ -634,6 +634,16 @@ Do not build a general-purpose file browser. That turns the daemon into a remote
 - **Validate paths**: normalize, then confirm the result is under the root. `../` injection is the classic failure for this kind of API
 
 Selecting a leaf registers the repo and auto-fills owner/name from `origin`.
+
+Implemented as `GET /api/directories` with optional absolute `path`. The daemon resolves the
+configured browse root and requested path, checks canonical containment and rejects direct paths
+through excluded names or below any ancestor with a `.git` marker. A repository is a leaf even when
+requested directly. Directory entries are not followed through symlinks, files are never listed,
+and changed or inaccessible paths fail closed. Cap output at 200 directories and inspection at
+2,000 entries per request; mark incomplete results. Limit concurrent directory reads to four. The
+browser offers a breadcrumb-like Up action and retry, while preserving the direct path field.
+Selecting a leaf calls the existing registration API, which revalidates path, Git identity, and
+GitHub origin before navigating to the derived owner/name.
 
 ### Review screen
 
@@ -761,7 +771,8 @@ Riskiest first. **Follow the order.**
 | 9C | Same-session refresh/re-review | Whole latest PR diff, conservative anchors, revision guards, submitted history |
 | 9D | Code search | View-local literal finder, bounded pinned-HEAD grep, read-only result navigation |
 | 9E | Repository/session management | Review filtering, reversible archive/restore, validated checkout management with dependency guards |
-| Later | Entry and review follow-ups | Permanent deletion, directory picker, native Windows, packaging, remote binding separately |
+| 9F | Directory picker | Bounded directory-only listing below the browse root and Git-leaf registration |
+| Later | Entry and review follow-ups | Permanent deletion, native Windows, packaging, remote binding separately |
 
 **Step 3 will take twice as long as expected.** A diff viewer with inline widgets is universally underestimated until you build one. If it stalls, dropping side-by-side and shipping unified only is the escape hatch.
 
