@@ -8,12 +8,18 @@ The planned next architecture is a standalone Rust daemon plus an independent de
 that reuses the React review UI. Rust will talk directly to the locally installed `claude` CLI
 and `codex app-server`, without an agent SDK dependency. The daemon remains usable without the
 desktop window on an SSH host. A future VS Code extension can use the same daemon as another
-client; it will not embed a second review engine. This migration is not implemented yet, and
-the current npm package is not a desktop installer.
+client; it will not embed a second review engine. The Cargo workspace, shared Rust wire models,
+and session-store library are implemented; HTTP serving, daemon lifecycle, and the desktop shell
+have not been ported yet.
+The current npm package runs the Node implementation.
 
-The Rust migration will add a root Cargo workspace for protocol, daemon/CLI, and desktop-shell
-crates. The React UI and future VS Code extension will keep npm tooling. Cargo and npm will coexist
-in the repository; the current Node daemon stays available while the Rust replacement is verified.
+The root Cargo workspace contains `crates/protocol` and the `crates/daemon` library/scaffold. The desktop
+shell will join it later. The React UI and future VS Code extension keep npm tooling. Cargo and
+npm coexist in the repository; the Node daemon remains the runnable application during migration.
+
+Legible has not been released. The Rust rewrite does not preserve old Node storage formats or
+provide backward-compatibility layers; protocols and storage may change with the current clients
+and tests before release. Local data is not automatically deleted or converted.
 
 ## Development
 
@@ -33,7 +39,38 @@ The repository is an npm workspace with separate browser, daemon, and shared-cod
 | `npm test`       | Build the shared protocol, then run the Vitest suite                  |
 | `npm run lint`   | Run ESLint with warnings treated as errors                            |
 | `npm run format` | Format supported files with Prettier                                  |
-| `npm run check`  | Run formatting, linting, tests, and the production build              |
+| `npm run check`  | Run all npm and Rust CI validations                                   |
+
+### Rust workspace
+
+Install Rust with rustup; `rust-toolchain.toml` selects stable Rust with rustfmt and Clippy. Run:
+
+```bash
+cargo check --workspace --locked
+cargo test --workspace --locked
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo run -p legible-daemon -- --version
+```
+
+The Rust daemon binary currently supports only `--help` and `--version`. It does not listen on
+a port or access saved sessions. Continue using the npm commands below to run a review.
+
+Rust and TypeScript tests share `packages/protocol/fixtures/wire.json`. The fixture source in
+`packages/protocol/src/testing/wire-fixtures.ts` is type-checked against the current TypeScript
+protocol on every protocol build. When changing the contract fixtures, regenerate the JSON with
+`npm run fixtures:write --workspace @legible/protocol`, then run both test suites. Rust tests check
+current wire shapes, omitted versus nullable fields, diff sides, and submission/event variants.
+Fixtures are excluded from the production TypeScript package. CI validates Rust and npm on Linux
+and macOS separately.
+
+`crates/daemon/src/sessions/store.rs` reads and writes one Rust storage format (`version: 1`),
+with explicit review revisions, from an explicitly supplied state directory. Saves use a synced,
+private temporary file and atomic rename. `crates/daemon/tests/fixtures/session-records.json`
+covers drafts, submission history, both agent backends, and chat requests. There is no legacy
+reader or version conversion. Loading does not rewrite records or resume agents. Unknown fields,
+invalid metadata, and symlinked records fail closed. Live restoration and write scheduling remain
+in Node until their own rewrite slice.
 
 ## Open a review
 
@@ -213,8 +250,8 @@ reclaimed only after acquiring the HTTP port and verifying that no live control 
 
 CLI startup and stop wait up to 30 seconds. A timeout does not kill a process: inspect `legible status`
 and `daemon.log` before retrying. Keep the state path short enough for a Unix socket (the full
-`daemon.sock` path must fit in 103 UTF-8 bytes). State files and the browser authentication contract
-remain compatible with the previous release.
+`daemon.sock` path must fit in 103 UTF-8 bytes). There is no previous published release or
+backward-compatibility guarantee for the rewrite.
 
 `npm run check` runs unit/process tests, builds the application, then runs `npm run test:cli` against
 the built executable with temporary repositories and fake vendor probes. The final smoke test needs
@@ -258,9 +295,10 @@ the status API from starting.
 `GET /api/sessions/:sessionId/updates` checks GitHub metadata; `POST .../refresh` verifies fetched
 head/base revisions and updates the session. `POST .../comments/:commentId/reanchor` accepts a new
 path, side, line, and optional same-side range. Session-scoped diff/file/chat/comment/submission and
-refresh requests send `x-legible-review-revision` from the rendered session (missing means legacy
-revision 0). Stale requests receive 409; refetch the session before retrying. MCP leases are likewise
-revision-bound. Session records are now v3 and still read v1/v2 files.
+refresh requests send `x-legible-review-revision` from the rendered session (the Node baseline
+treats a missing header as revision 0). Stale requests receive 409; refetch the session before
+retrying. MCP leases are likewise revision-bound. The Node baseline writes v3 records; the Rust
+store uses its own current format and does not inherit Node's legacy readers.
 
 `GET /api/sessions/:sessionId/search?q=...` returns pinned-HEAD paths, line numbers, previews, revision,
 and truncation/skipped-file information. `GET .../search/file?path=...` opens a regular tracked HEAD

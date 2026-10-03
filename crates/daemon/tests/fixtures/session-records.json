@@ -1,0 +1,206 @@
+[
+  {
+    "version": 1,
+    "session": {
+      "id": "draft-review",
+      "repoId": "owner/repo",
+      "prNumber": 42,
+      "headSha": "head-draft",
+      "baseSha": "base-draft",
+      "reviewRevision": 0,
+      "worktreePath": "/state/worktrees/draft-review",
+      "config": {
+        "main": { "backend": "codex", "shell": "git", "network": "off", "onOutOfScope": "deny" }
+      },
+      "comments": [
+        {
+          "id": "human-1",
+          "path": "src/한 글.rs",
+          "line": 4,
+          "side": "RIGHT",
+          "body": "기존 초안",
+          "origin": "human",
+          "createdAt": "2026-10-03T00:00:00.000Z"
+        }
+      ],
+      "createdAt": "2026-10-03T00:00:00.000Z"
+    }
+  },
+  {
+    "version": 1,
+    "session": {
+      "id": "claude-review",
+      "repoId": "owner/repo",
+      "prNumber": 43,
+      "headSha": "head-claude",
+      "baseSha": "base-claude",
+      "reviewRevision": 0,
+      "worktreePath": "/state/worktrees/claude-review",
+      "config": {
+        "main": {
+          "backend": "claude",
+          "model": "future-model",
+          "effort": "future-effort",
+          "shell": "none",
+          "network": "fetch",
+          "onOutOfScope": "deny"
+        }
+      },
+      "comments": [],
+      "createdAt": "2026-10-03T00:00:00.000Z"
+    },
+    "chat": {
+      "snapshot": {
+        "sessionId": "claude-review",
+        "revision": 7,
+        "status": "idle",
+        "backend": "claude",
+        "model": "future-model",
+        "entries": [
+          {
+            "id": "assistant-1",
+            "turnId": "turn-1",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "kind": "message",
+            "role": "assistant",
+            "text": "저장된 리뷰"
+          },
+          {
+            "id": "tool-1",
+            "turnId": "turn-1",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "kind": "tool",
+            "callId": "call-1",
+            "name": "list_comments",
+            "status": "completed",
+            "input": "{}",
+            "output": "[]"
+          }
+        ],
+        "lastUsage": {
+          "inputTokens": 10,
+          "cachedInputTokens": 2,
+          "outputTokens": 3,
+          "reasoningOutputTokens": 1,
+          "totalTokens": 14
+        }
+      },
+      "retry": { "kind": "review" }
+    }
+  },
+  {
+    "version": 1,
+    "session": {
+      "id": "codex-review",
+      "repoId": "owner/repo",
+      "prNumber": 44,
+      "headSha": "head-current",
+      "baseSha": "base-current",
+      "baseTipSha": "tip-current",
+      "baseRef": "main",
+      "reviewRevision": 2,
+      "worktreeGeneration": "12345678-1234-1234-1234-123456789abc",
+      "worktreePath": "/state/worktrees/codex-review",
+      "config": {
+        "main": { "backend": "codex", "shell": "broad", "network": "free", "onOutOfScope": "ask" },
+        "assist": { "backend": "claude", "shell": "git", "network": "off", "onOutOfScope": "deny" }
+      },
+      "comments": [
+        {
+          "id": "codex-1",
+          "path": "src/한 글.rs",
+          "line": 6,
+          "side": "LEFT",
+          "startLine": 4,
+          "startSide": "LEFT",
+          "body": "여러 줄 초안",
+          "origin": "codex",
+          "anchorStatus": "current",
+          "anchorRevision": 2,
+          "createdAt": "2026-10-03T00:00:00.000Z"
+        },
+        {
+          "id": "claude-1",
+          "path": "src/old.rs",
+          "line": 3,
+          "side": "RIGHT",
+          "body": "위치 재확인",
+          "origin": "claude",
+          "anchorStatus": "needs_review",
+          "anchorRevision": 1,
+          "createdAt": "2026-10-03T00:00:00.000Z"
+        }
+      ],
+      "submissionHistory": [
+        {
+          "reviewRevision": 1,
+          "headSha": "head-previous",
+          "baseSha": "base-previous",
+          "comments": [],
+          "submission": {
+            "status": "submitted",
+            "event": "APPROVE",
+            "marker": "legible:test-history",
+            "startedAt": "2026-10-03T00:00:00.000Z",
+            "currentHeadSha": "head-previous",
+            "staleHead": false,
+            "body": "",
+            "githubReviewId": 42,
+            "htmlUrl": "https://github.com/owner/repo/pull/44#pullrequestreview-42",
+            "submittedAt": "2026-10-03T00:00:00.000Z",
+            "cleanup": { "status": "complete" }
+          }
+        }
+      ],
+      "submission": {
+        "status": "uncertain",
+        "event": "REQUEST_CHANGES",
+        "marker": "legible:test-current",
+        "startedAt": "2026-10-03T00:00:00.000Z",
+        "currentHeadSha": "head-current",
+        "staleHead": true,
+        "body": "확인 필요"
+      },
+      "createdAt": "2026-10-03T00:00:00.000Z",
+      "lastOpenedAt": "2026-10-03T00:00:00.000Z",
+      "archivedAt": "2026-10-03T00:00:00.000Z",
+      "deletionRequestedAt": "2026-10-03T00:00:00.000Z",
+      "pullRequest": { "title": "Saved review", "url": "https://github.com/owner/repo/pull/44" }
+    },
+    "chat": {
+      "snapshot": {
+        "sessionId": "codex-review",
+        "revision": 9,
+        "reviewPending": false,
+        "status": "running",
+        "backend": "codex",
+        "currentTurnId": "turn-2",
+        "currentItemId": "codex-1",
+        "retryItemId": "claude-1",
+        "entries": [
+          {
+            "id": "user-2",
+            "turnId": "turn-2",
+            "itemId": "codex-1",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "kind": "message",
+            "role": "user",
+            "text": "다시 확인"
+          },
+          {
+            "id": "notice-1",
+            "turnId": "turn-1",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "kind": "notice",
+            "scope": "session",
+            "level": "info",
+            "message": "Review refreshed",
+            "retryable": false
+          }
+        ]
+      },
+      "retry": { "kind": "message", "message": "이전 요청", "itemId": "claude-1" },
+      "active": { "kind": "message", "message": "다시 확인", "itemId": "codex-1" }
+    }
+  }
+]

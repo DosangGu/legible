@@ -69,7 +69,7 @@ an embedded WebView rather than rewriting the diff viewer in a native widget too
 
 | Layer | Current implementation | Target |
 |---|---|---|
-| Daemon | TypeScript (Node) | Standalone Rust process; preserve the observable HTTP/WebSocket and state contracts during migration |
+| Daemon | TypeScript (Node) | Standalone Rust process; retain review features and safety constraints, with contracts free to change alongside clients |
 | Review UI | Vite + React browser SPA | Reuse React + CodeMirror in the desktop WebView; keep browser access and make host integration replaceable |
 | GitHub | Octokit (REST + GraphQL) | Daemon-owned GitHub API client; `gh` remains an authentication broker, not a review API |
 | Agents | Claude Agent SDK; Codex app-server | Direct Rust clients of the locally installed official Claude CLI and Codex app-server |
@@ -104,9 +104,15 @@ The daemon crate must build and run independently of the desktop member and its 
 The desktop member is added when its framework is selected. A future VS Code extension belongs
 to the npm workspace and connects to the daemon contract; it does not become a Cargo member.
 
-Keep one authoritative wire contract. During migration, the existing TypeScript types and recorded
-fixtures define compatibility. Once ported, the Rust protocol crate owns the serializable models
-and produces the TypeScript bindings through a shared schema/generation step; do not maintain two
+Legible has not been released. Do not build backward-compatibility layers, preserve historical
+Node state formats, or require a state migration for this rewrite. API/event/storage schemas can
+change with their in-repository clients and tests. Revisit compatibility when a release is planned,
+not as a prerequisite for current implementation. This does not authorize deleting local data.
+
+Keep one authoritative wire contract. For now, the TypeScript types and recorded fixtures verify
+the current client/server integration, not compatibility with a previous release. Once ported,
+the Rust protocol crate owns the serializable models and produces the TypeScript bindings through
+a shared schema/generation step; do not maintain two
 independent copies of the same HTTP and event types. Select the generator when porting the contract
 and verify its output against the existing payload fixtures.
 
@@ -115,6 +121,18 @@ Add Cargo checks to CI alongside the existing npm checks as soon as the first Ru
 `cargo clippy --workspace --all-targets -- -D warnings`. Keep Rust toolchain settings and common
 dependency versions in the workspace configuration. Build output belongs in Cargo's `target/`;
 frontend output remains in its workspace's `dist/`.
+
+The first migration slice establishes the root Cargo workspace, Rust wire models, shared
+TypeScript/Rust JSON fixtures, and both CI check paths. The daemon crate currently provides only
+an informational executable (`--help` / `--version`); HTTP serving and lifecycle remain on the
+Node baseline. The TypeScript contract remains authoritative until schema generation is added.
+
+The second slice adds a Rust session-store library with one current format (`version: 1`) and an
+explicit review revision, including 0 for a new review. There is no Node-format conversion or
+version upgrade on load. Drafts, submitted receipts, and chat snapshots/active/retry requests are
+stored together. Rust-owned fixtures exercise this format without imposing a Node storage contract.
+HTTP startup, live chat restoration, write queues, and the 200 ms chat debounce are not ported in
+this slice; the executable still does not open state.
 
 ### Startup and CLI lifecycle
 
@@ -239,10 +257,19 @@ Presets are not a fixed menu — they are **named knob combinations the user sav
 
 Pure in-memory state loses work on daemon restart or browser refresh. This file is also the recovery path when an agent session gets compacted or reset: `list_comments()` reads back current state. It is the single source of truth.
 
-Store a versioned record containing the review session and bounded chat transcript. Write through a
-same-directory temporary file and atomic rename, with `0700` on the sessions directory and `0600`
+Store a record with the current format identifier, review session, and bounded chat transcript.
+Write through a same-directory temporary file and atomic rename, with `0700` on the sessions directory and `0600`
 on records. Comment mutations flush before API success; streamed chat deltas may be coalesced for up
 to 200 ms and must flush when a turn settles or the daemon shuts down.
+
+The Rust store requires an explicit state root and validates the entire load before returning any
+records. Corrupt/unsupported files are reported with their paths and left untouched. It rejects
+unknown fields, requires record IDs to match filenames and chat session IDs, and refuses symlinked
+session directories/records. Archive/deletion timestamps must be RFC 3339. These are integrity
+checks for the current schema, not an automatic repair or compatibility layer. Storage remains
+synchronous; future async services must run it off request threads and serialize writes per session. Both stores sync
+temporary file contents before rename; neither currently guarantees directory durability after a
+power loss.
 
 ---
 
@@ -289,19 +316,19 @@ Provide explicit update-check and refresh commands. Refresh keeps the session ID
 drafts, and conversation while preparing a separate UUID-suffixed worktree generation. Verify both
 GitHub head and target-branch tip against fetched refs; pin their merge-base for the **whole latest
 PR diff**, not just newly added commits. A target-tip change without an effective head/merge-base
-change is a no-op for draft revisions. Legacy sessions with no saved target tip report unknown base
+change is a no-op for draft revisions. Sessions without a verified target tip report unknown base
 change until refresh verifies it.
 
 Serialize refresh with comment/submission mutations; refuse active agents, unresolved submissions,
 and submitted sessions whose worktree cleanup is incomplete. Close the idle agent and its MCP lease,
 restore projected configuration, prepare comment mapping and a revision-boundary chat notice, then
-atomically save the next session and chat as one v3 record before publishing. Read v1/v2 records as
-legacy revision 0. Failed preparation/save preserves the previous revision and removes only the
+atomically save the next session and chat as one current-format record before publishing.
+Failed preparation/save preserves the previous revision and removes only the
 candidate generation. Remove the previous worktree after commit; cleanup failure is a warning and
 leaves the old generation for safe retention cleanup. Never reset or force-remove a dirty worktree.
 
 Increment `reviewRevision` for each effective refresh or submitted-session continuation. Browser
-requests carry `x-legible-review-revision` (absent means 0); MCP tools capture it in their lease.
+requests carry `x-legible-review-revision`; MCP tools capture it in their lease.
 Recheck queued mutations against the current revision. Reject stale requests and requests during
 preparation with 409. Keep chat stream revisions monotonic. The browser reloads on revision events,
 invalidates file caches and anchors, ignores obsolete responses, and preserves unsent text. Empty
@@ -318,7 +345,7 @@ read-only agent on the latest whole diff, with prior transcript and revision bou
 requests are discarded. After successful submission and cleanup, **Continue reviewing** archives
 the receipt, pinned commits, and comments as read-only history and clears the current draft in the
 same session. Submitted comment conversations are read-only. Every submission attempt has a unique
-hidden marker, while reconciliation continues to honor exact legacy persisted markers.
+hidden marker, and reconciliation uses the exact persisted marker for that attempt.
 
 Since submission sends the whole array, **a single stale anchor can fail the entire request with a 422.**
 
@@ -682,7 +709,7 @@ From the second run onward, **recent items are the first screen.** Design the em
 ### Repository and saved-review management
 
 The home screen filters recent reviews by repository and visibility/submission state, newest-opened
-first. Archive is a reversible metadata transition (`archivedAt`, optional in v3 records), not deletion.
+first. Archive is a reversible metadata transition (optional `archivedAt`), not deletion.
 Preserve comments, chats, pinned revisions, receipts/history and worktrees. Include archived sessions
 in snapshots and active worktree protection; hide them by default in the UI. Archive rejects active
 agents, refreshes, pending mutations, uncertain/in-flight submissions and incomplete cleanup. Serialize
@@ -882,13 +909,13 @@ session lifecycle has settled.
 
 ### Rust/desktop migration
 
-1. Freeze the existing API, event, persistence, and safety behavior with contract fixtures and
-   process tests, then introduce the root Cargo workspace with protocol and daemon crates alongside
-   the existing npm workspace. Decide and document a versioned state migration before replacing a
-   user's installed daemon; never silently discard saved reviews or worktrees.
+1. Capture expected review behavior and safety constraints with fixtures and process tests, then
+   introduce the root Cargo workspace with protocol and daemon crates alongside the npm workspace.
+   Define the current Rust storage schema without legacy readers or conversion paths. Protocol and
+   storage formats may change before release; do not delete local data as part of the rewrite.
 2. Establish the standalone Rust daemon and CLI lifecycle while preserving local-only binding,
-   authenticated browser access, singleton ownership, and the current review API. Keep the Node
-   daemon available as the comparison implementation until parity is demonstrated.
+   authenticated browser access, singleton ownership, and a matching review client. Keep the Node
+   daemon available as a feature reference while the Rust implementation is incomplete.
 3. Port domain services and the Codex app-server adapter, then port the Claude CLI adapter after
    proving persistent streaming, interruption, tool restrictions, MCP initialization checks,
    and base-config projection with real-process tests. Remove the SDK only after that parity gate.

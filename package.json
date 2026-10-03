@@ -22,7 +22,9 @@
     "lint": "eslint . --max-warnings 0",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check": "npm run format:check && npm run lint && npm test && npm run build && npm run test:cli"
+    "check:npm": "npm run format:check && npm run lint && npm test && npm run build && npm run test:cli",
+    "check:rust": "cargo fmt --all -- --check && cargo check --workspace --locked && cargo test --workspace --locked && cargo clippy --workspace --all-targets --locked -- -D warnings",
+    "check": "npm run check:npm && npm run check:rust"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

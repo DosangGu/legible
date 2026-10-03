@@ -1,0 +1,1291 @@
+{
+  "repos": [
+    {
+      "id": "owner/repo",
+      "owner": "owner",
+      "name": "repo",
+      "checkouts": ["/projects/repo"],
+      "primaryCheckout": "/projects/repo"
+    }
+  ],
+  "repositoryDetails": [
+    {
+      "repo": {
+        "id": "owner/repo",
+        "owner": "owner",
+        "name": "repo",
+        "checkouts": ["/projects/repo"],
+        "primaryCheckout": "/projects/repo"
+      },
+      "checkouts": [
+        {
+          "path": "/projects/repo",
+          "available": true
+        }
+      ],
+      "sessionCount": 0
+    },
+    {
+      "repo": {
+        "id": "owner/repo",
+        "owner": "owner",
+        "name": "repo",
+        "checkouts": ["/projects/repo"],
+        "primaryCheckout": "/projects/repo"
+      },
+      "checkouts": [
+        {
+          "path": "/projects/repo",
+          "available": false,
+          "message": "Moved"
+        }
+      ],
+      "sessionCount": 2,
+      "primaryChangeBlocked": "Saved reviews"
+    }
+  ],
+  "health": [
+    {
+      "status": "ready",
+      "version": "0.0.0",
+      "uptimeSeconds": 0
+    },
+    {
+      "status": "degraded",
+      "version": "0.0.0",
+      "uptimeSeconds": 12
+    }
+  ],
+  "preflight": [
+    {
+      "status": "degraded",
+      "checkedAt": "2026-10-03T00:00:00.000Z",
+      "checks": [
+        {
+          "tool": "git",
+          "status": "ready",
+          "version": "git test"
+        },
+        {
+          "tool": "gh",
+          "status": "unauthenticated",
+          "message": "Sign in"
+        },
+        {
+          "tool": "claude",
+          "status": "missing"
+        },
+        {
+          "tool": "codex",
+          "status": "error",
+          "version": "",
+          "message": "Unavailable"
+        }
+      ]
+    },
+    {
+      "status": "ready",
+      "checkedAt": "2026-10-03T00:00:00.000Z",
+      "checks": []
+    }
+  ],
+  "sessions": [
+    {
+      "id": "minimal",
+      "repoId": "owner/repo",
+      "prNumber": 1,
+      "headSha": "head",
+      "baseSha": "base",
+      "worktreePath": "/state/worktrees/minimal",
+      "reviewRevision": 0,
+      "config": {
+        "main": {
+          "backend": "codex",
+          "shell": "git",
+          "network": "off",
+          "onOutOfScope": "deny"
+        }
+      },
+      "comments": [],
+      "createdAt": "2026-10-03T00:00:00.000Z"
+    },
+    {
+      "id": "review",
+      "repoId": "owner/repo",
+      "prNumber": 1,
+      "headSha": "head",
+      "baseSha": "base",
+      "worktreePath": "/state/worktrees/minimal",
+      "reviewRevision": 2,
+      "config": {
+        "main": {
+          "backend": "codex",
+          "model": "future-model",
+          "effort": "future-effort",
+          "shell": "broad",
+          "network": "free",
+          "onOutOfScope": "ask"
+        },
+        "assist": {
+          "backend": "claude",
+          "shell": "none",
+          "network": "fetch",
+          "onOutOfScope": "deny"
+        }
+      },
+      "comments": [
+        {
+          "id": "human",
+          "path": "src/한 글.rs",
+          "line": 4,
+          "side": "RIGHT",
+          "body": "확인",
+          "origin": "human",
+          "createdAt": "2026-10-03T00:00:00.000Z"
+        },
+        {
+          "id": "codex",
+          "path": "src/한 글.rs",
+          "line": 6,
+          "side": "LEFT",
+          "startLine": 4,
+          "startSide": "LEFT",
+          "body": "Original behavior",
+          "origin": "codex",
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "anchorStatus": "current",
+          "anchorRevision": 0
+        },
+        {
+          "id": "claude",
+          "path": "src/old.rs",
+          "line": 3,
+          "side": "RIGHT",
+          "body": "Locate again",
+          "origin": "claude",
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "anchorStatus": "needs_review",
+          "anchorRevision": 1
+        }
+      ],
+      "createdAt": "2026-10-03T00:00:00.000Z",
+      "baseTipSha": "tip",
+      "baseRef": "main",
+      "worktreeGeneration": "generation-2",
+      "submissionHistory": [
+        {
+          "reviewRevision": 1,
+          "headSha": "old-head",
+          "baseSha": "base",
+          "comments": [],
+          "submission": {
+            "event": "COMMENT",
+            "marker": "legible:test",
+            "startedAt": "2026-10-03T00:00:00.000Z",
+            "currentHeadSha": "head",
+            "staleHead": false,
+            "status": "submitted",
+            "body": "",
+            "githubReviewId": 42,
+            "htmlUrl": "https://github.com/owner/repo/pull/1#pullrequestreview-42",
+            "submittedAt": "2026-10-03T00:00:00.000Z",
+            "cleanup": {
+              "status": "complete"
+            }
+          }
+        }
+      ],
+      "submission": {
+        "event": "COMMENT",
+        "marker": "legible:test",
+        "startedAt": "2026-10-03T00:00:00.000Z",
+        "currentHeadSha": "head",
+        "staleHead": false,
+        "status": "uncertain"
+      },
+      "lastOpenedAt": "2026-10-03T00:00:00.000Z",
+      "archivedAt": "2026-10-03T00:00:00.000Z",
+      "deletionRequestedAt": "2026-10-03T00:00:00.000Z",
+      "pullRequest": {
+        "title": "Review title",
+        "url": "https://github.com/owner/repo/pull/1"
+      }
+    }
+  ],
+  "submissions": [
+    {
+      "event": "COMMENT",
+      "marker": "legible:test",
+      "startedAt": "2026-10-03T00:00:00.000Z",
+      "currentHeadSha": "head",
+      "staleHead": false,
+      "status": "submitting"
+    },
+    {
+      "event": "REQUEST_CHANGES",
+      "marker": "legible:test",
+      "startedAt": "2026-10-03T00:00:00.000Z",
+      "currentHeadSha": "head",
+      "staleHead": true,
+      "status": "uncertain",
+      "body": "Investigate"
+    },
+    {
+      "event": "COMMENT",
+      "marker": "legible:test",
+      "startedAt": "2026-10-03T00:00:00.000Z",
+      "currentHeadSha": "head",
+      "staleHead": false,
+      "status": "submitted",
+      "body": "",
+      "githubReviewId": 42,
+      "htmlUrl": "https://github.com/owner/repo/pull/1#pullrequestreview-42",
+      "submittedAt": "2026-10-03T00:00:00.000Z",
+      "cleanup": {
+        "status": "complete"
+      }
+    },
+    {
+      "event": "APPROVE",
+      "marker": "legible:test",
+      "startedAt": "2026-10-03T00:00:00.000Z",
+      "currentHeadSha": "head",
+      "staleHead": false,
+      "status": "submitted",
+      "body": "",
+      "githubReviewId": 42,
+      "htmlUrl": "https://github.com/owner/repo/pull/1#pullrequestreview-42",
+      "submittedAt": "2026-10-03T00:00:00.000Z",
+      "cleanup": {
+        "status": "pending"
+      }
+    },
+    {
+      "event": "COMMENT",
+      "marker": "legible:test",
+      "startedAt": "2026-10-03T00:00:00.000Z",
+      "currentHeadSha": "head",
+      "staleHead": false,
+      "status": "submitted",
+      "body": "",
+      "githubReviewId": 42,
+      "htmlUrl": "https://github.com/owner/repo/pull/1#pullrequestreview-42",
+      "submittedAt": "2026-10-03T00:00:00.000Z",
+      "cleanup": {
+        "status": "failed",
+        "message": "Dirty worktree"
+      }
+    }
+  ],
+  "reviewUpdates": [
+    {
+      "reviewRevision": 0,
+      "pinnedHeadSha": "head",
+      "headSha": "next-head",
+      "baseTipSha": "tip",
+      "baseRef": "main",
+      "headChanged": true,
+      "baseChanged": null
+    },
+    {
+      "reviewRevision": 0,
+      "pinnedHeadSha": "head",
+      "headSha": "next-head",
+      "baseTipSha": "tip",
+      "baseRef": "main",
+      "headChanged": true,
+      "baseChanged": false
+    },
+    {
+      "reviewRevision": 0,
+      "pinnedHeadSha": "head",
+      "headSha": "next-head",
+      "baseTipSha": "tip",
+      "baseRef": "main",
+      "headChanged": true,
+      "baseChanged": true
+    }
+  ],
+  "diffs": [
+    {
+      "baseSha": "base",
+      "headSha": "head",
+      "additions": 1,
+      "deletions": 1,
+      "files": [
+        {
+          "oldPath": null,
+          "newPath": "new.rs",
+          "status": "added",
+          "isBinary": false,
+          "additions": 0,
+          "deletions": 0,
+          "hunks": []
+        },
+        {
+          "oldPath": "gone.png",
+          "newPath": null,
+          "status": "deleted",
+          "isBinary": true,
+          "additions": 0,
+          "deletions": 0,
+          "hunks": []
+        },
+        {
+          "oldPath": "old.rs",
+          "newPath": "renamed.rs",
+          "status": "renamed",
+          "isBinary": false,
+          "oldMode": "100644",
+          "newMode": "100755",
+          "additions": 0,
+          "deletions": 0,
+          "hunks": []
+        },
+        {
+          "oldPath": "src/한 글.rs",
+          "newPath": "src/한 글.rs",
+          "status": "modified",
+          "isBinary": false,
+          "additions": 1,
+          "deletions": 1,
+          "hunks": [
+            {
+              "oldStart": 4,
+              "oldLines": 2,
+              "newStart": 4,
+              "newLines": 2,
+              "heading": "fn main()",
+              "lines": [
+                {
+                  "kind": "context",
+                  "content": "same",
+                  "leftLine": 4,
+                  "rightLine": 4,
+                  "noNewlineAtEnd": false
+                },
+                {
+                  "kind": "deletion",
+                  "content": "old",
+                  "leftLine": 5,
+                  "rightLine": null,
+                  "noNewlineAtEnd": false
+                },
+                {
+                  "kind": "addition",
+                  "content": "새 값",
+                  "leftLine": null,
+                  "rightLine": 5,
+                  "noNewlineAtEnd": true
+                }
+              ]
+            },
+            {
+              "oldStart": 0,
+              "oldLines": 0,
+              "newStart": 0,
+              "newLines": 0,
+              "lines": []
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "reviewFiles": [
+    {
+      "path": "gone.png",
+      "side": "LEFT",
+      "sha": "base",
+      "content": null,
+      "isBinary": true,
+      "byteLength": 12
+    },
+    {
+      "path": "new.rs",
+      "side": "RIGHT",
+      "sha": "head",
+      "content": "",
+      "isBinary": false,
+      "byteLength": 0
+    }
+  ],
+  "directories": [
+    {
+      "root": "/projects",
+      "path": "/projects",
+      "repository": false,
+      "entries": [
+        {
+          "name": "repo",
+          "path": "/projects/repo",
+          "repository": true
+        }
+      ],
+      "truncated": false
+    },
+    {
+      "root": "/projects",
+      "path": "/projects/repo",
+      "parent": "/projects",
+      "repository": true,
+      "entries": [],
+      "truncated": true
+    }
+  ],
+  "searches": [
+    {
+      "reviewRevision": 0,
+      "headSha": "head",
+      "query": "한 글",
+      "matches": [
+        {
+          "path": "src/한 글.rs",
+          "line": 5,
+          "preview": "한 글"
+        }
+      ],
+      "truncated": true,
+      "skippedLargeFiles": 1
+    }
+  ],
+  "errors": [
+    {
+      "error": {
+        "code": "session_not_found",
+        "message": "Unknown review"
+      }
+    },
+    {
+      "error": {
+        "code": "revision_conflict",
+        "message": "Refresh",
+        "details": {
+          "revision": 0,
+          "received": null,
+          "values": [
+            false,
+            "",
+            {
+              "path": "src/한 글.rs"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "chats": [
+    {
+      "sessionId": "review",
+      "revision": 0,
+      "status": "unavailable",
+      "backend": "codex",
+      "entries": []
+    },
+    {
+      "sessionId": "review",
+      "revision": 0,
+      "status": "idle",
+      "backend": "codex",
+      "entries": []
+    },
+    {
+      "sessionId": "review",
+      "revision": 0,
+      "status": "starting",
+      "backend": "codex",
+      "entries": []
+    },
+    {
+      "sessionId": "review",
+      "revision": 0,
+      "status": "running",
+      "backend": "codex",
+      "entries": []
+    },
+    {
+      "sessionId": "review",
+      "revision": 0,
+      "status": "interrupting",
+      "backend": "codex",
+      "entries": []
+    },
+    {
+      "sessionId": "review",
+      "revision": 0,
+      "status": "failed",
+      "backend": "codex",
+      "entries": []
+    },
+    {
+      "sessionId": "review",
+      "revision": 1,
+      "status": "running",
+      "backend": "claude",
+      "entries": [
+        {
+          "turnId": "turn-1",
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "id": "user",
+          "kind": "message",
+          "role": "user",
+          "text": ""
+        },
+        {
+          "turnId": "turn-1",
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "id": "assistant",
+          "itemId": "human",
+          "kind": "message",
+          "role": "assistant",
+          "text": "설명"
+        },
+        {
+          "turnId": "turn-1",
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "id": "running",
+          "kind": "tool",
+          "name": "list_comments",
+          "status": "running",
+          "input": "{}"
+        },
+        {
+          "turnId": "turn-1",
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "id": "completed",
+          "itemId": "human",
+          "kind": "tool",
+          "callId": "call-1",
+          "name": "list_comments",
+          "status": "completed",
+          "input": "{}",
+          "output": "[]"
+        },
+        {
+          "turnId": "turn-1",
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "id": "failed",
+          "kind": "tool",
+          "name": "focus",
+          "status": "failed",
+          "input": "{}",
+          "output": ""
+        },
+        {
+          "turnId": "turn-1",
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "id": "info",
+          "kind": "notice",
+          "level": "info",
+          "message": "Ready",
+          "retryable": false
+        },
+        {
+          "turnId": "turn-1",
+          "createdAt": "2026-10-03T00:00:00.000Z",
+          "id": "error",
+          "itemId": "human",
+          "kind": "notice",
+          "scope": "session",
+          "level": "error",
+          "message": "Retry",
+          "retryable": true
+        }
+      ],
+      "reviewPending": false,
+      "model": "future-model",
+      "unavailableReason": "",
+      "currentTurnId": "turn-1",
+      "currentItemId": "human",
+      "retryItemId": "claude",
+      "lastUsage": {
+        "inputTokens": 10,
+        "cachedInputTokens": 2,
+        "outputTokens": 3,
+        "reasoningOutputTokens": 1,
+        "totalTokens": 14
+      }
+    }
+  ],
+  "events": [
+    {
+      "type": "daemon.snapshot",
+      "payload": {
+        "preflight": {
+          "status": "degraded",
+          "checkedAt": "2026-10-03T00:00:00.000Z",
+          "checks": [
+            {
+              "tool": "git",
+              "status": "ready",
+              "version": "git test"
+            },
+            {
+              "tool": "gh",
+              "status": "unauthenticated",
+              "message": "Sign in"
+            },
+            {
+              "tool": "claude",
+              "status": "missing"
+            },
+            {
+              "tool": "codex",
+              "status": "error",
+              "version": "",
+              "message": "Unavailable"
+            }
+          ]
+        },
+        "sessions": []
+      },
+      "sequence": 0,
+      "emittedAt": "2026-10-03T00:00:00.000Z"
+    },
+    {
+      "type": "preflight.updated",
+      "payload": {
+        "status": "degraded",
+        "checkedAt": "2026-10-03T00:00:00.000Z",
+        "checks": [
+          {
+            "tool": "git",
+            "status": "ready",
+            "version": "git test"
+          },
+          {
+            "tool": "gh",
+            "status": "unauthenticated",
+            "message": "Sign in"
+          },
+          {
+            "tool": "claude",
+            "status": "missing"
+          },
+          {
+            "tool": "codex",
+            "status": "error",
+            "version": "",
+            "message": "Unavailable"
+          }
+        ]
+      },
+      "sequence": 1,
+      "emittedAt": "2026-10-03T00:00:00.000Z"
+    },
+    {
+      "type": "repo.updated",
+      "payload": {
+        "id": "owner/repo",
+        "owner": "owner",
+        "name": "repo",
+        "checkouts": ["/projects/repo"],
+        "primaryCheckout": "/projects/repo"
+      },
+      "sequence": 2,
+      "emittedAt": "2026-10-03T00:00:00.000Z"
+    },
+    {
+      "type": "repo.removed",
+      "payload": {
+        "id": "owner/repo"
+      },
+      "sequence": 3,
+      "emittedAt": "2026-10-03T00:00:00.000Z"
+    },
+    {
+      "type": "session.added",
+      "payload": {
+        "id": "minimal",
+        "repoId": "owner/repo",
+        "prNumber": 1,
+        "headSha": "head",
+        "baseSha": "base",
+        "worktreePath": "/state/worktrees/minimal",
+        "reviewRevision": 0,
+        "config": {
+          "main": {
+            "backend": "codex",
+            "shell": "git",
+            "network": "off",
+            "onOutOfScope": "deny"
+          }
+        },
+        "comments": [],
+        "createdAt": "2026-10-03T00:00:00.000Z"
+      },
+      "sequence": 4,
+      "emittedAt": "2026-10-03T00:00:00.000Z"
+    },
+    {
+      "type": "session.updated",
+      "payload": {
+        "id": "review",
+        "repoId": "owner/repo",
+        "prNumber": 1,
+        "headSha": "head",
+        "baseSha": "base",
+        "worktreePath": "/state/worktrees/minimal",
+        "reviewRevision": 2,
+        "config": {
+          "main": {
+            "backend": "codex",
+            "model": "future-model",
+            "effort": "future-effort",
+            "shell": "broad",
+            "network": "free",
+            "onOutOfScope": "ask"
+          },
+          "assist": {
+            "backend": "claude",
+            "shell": "none",
+            "network": "fetch",
+            "onOutOfScope": "deny"
+          }
+        },
+        "comments": [
+          {
+            "id": "human",
+            "path": "src/한 글.rs",
+            "line": 4,
+            "side": "RIGHT",
+            "body": "확인",
+            "origin": "human",
+            "createdAt": "2026-10-03T00:00:00.000Z"
+          },
+          {
+            "id": "codex",
+            "path": "src/한 글.rs",
+            "line": 6,
+            "side": "LEFT",
+            "startLine": 4,
+            "startSide": "LEFT",
+            "body": "Original behavior",
+            "origin": "codex",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "anchorStatus": "current",
+            "anchorRevision": 0
+          },
+          {
+            "id": "claude",
+            "path": "src/old.rs",
+            "line": 3,
+            "side": "RIGHT",
+            "body": "Locate again",
+            "origin": "claude",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "anchorStatus": "needs_review",
+            "anchorRevision": 1
+          }
+        ],
+        "createdAt": "2026-10-03T00:00:00.000Z",
+        "baseTipSha": "tip",
+        "baseRef": "main",
+        "worktreeGeneration": "generation-2",
+        "submissionHistory": [
+          {
+            "reviewRevision": 1,
+            "headSha": "old-head",
+            "baseSha": "base",
+            "comments": [],
+            "submission": {
+              "event": "COMMENT",
+              "marker": "legible:test",
+              "startedAt": "2026-10-03T00:00:00.000Z",
+              "currentHeadSha": "head",
+              "staleHead": false,
+              "status": "submitted",
+              "body": "",
+              "githubReviewId": 42,
+              "htmlUrl": "https://github.com/owner/repo/pull/1#pullrequestreview-42",
+              "submittedAt": "2026-10-03T00:00:00.000Z",
+              "cleanup": {
+                "status": "complete"
+              }
+            }
+          }
+        ],
+        "submission": {
+          "event": "COMMENT",
+          "marker": "legible:test",
+          "startedAt": "2026-10-03T00:00:00.000Z",
+          "currentHeadSha": "head",
+          "staleHead": false,
+          "status": "uncertain"
+        },
+        "lastOpenedAt": "2026-10-03T00:00:00.000Z",
+        "archivedAt": "2026-10-03T00:00:00.000Z",
+        "deletionRequestedAt": "2026-10-03T00:00:00.000Z",
+        "pullRequest": {
+          "title": "Review title",
+          "url": "https://github.com/owner/repo/pull/1"
+        }
+      },
+      "sequence": 5,
+      "emittedAt": "2026-10-03T00:00:00.000Z"
+    },
+    {
+      "type": "session.removed",
+      "payload": {
+        "id": "minimal"
+      },
+      "sequence": 6,
+      "emittedAt": "2026-10-03T00:00:00.000Z"
+    },
+    {
+      "type": "review.focus.requested",
+      "payload": {
+        "sessionId": "review",
+        "path": "src/한 글.rs",
+        "line": 6,
+        "side": "LEFT",
+        "startLine": 4
+      },
+      "sequence": 7,
+      "emittedAt": "2026-10-03T00:00:00.000Z"
+    },
+    {
+      "type": "chat.event",
+      "payload": {
+        "sessionId": "review",
+        "revision": 0,
+        "event": {
+          "type": "status",
+          "status": "idle"
+        }
+      },
+      "sequence": 8,
+      "emittedAt": "2026-10-03T00:00:00.000Z"
+    },
+    {
+      "type": "chat.event",
+      "payload": {
+        "sessionId": "review",
+        "revision": 0,
+        "event": {
+          "type": "status",
+          "status": "running",
+          "currentTurnId": "turn-1",
+          "currentItemId": "human",
+          "retryItemId": "claude"
+        }
+      },
+      "sequence": 9,
+      "emittedAt": "2026-10-03T00:00:00.000Z"
+    },
+    {
+      "type": "chat.event",
+      "payload": {
+        "sessionId": "review",
+        "revision": 0,
+        "event": {
+          "type": "entry.added",
+          "entry": {
+            "turnId": "turn-1",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "id": "user",
+            "kind": "message",
+            "role": "user",
+            "text": ""
+          }
+        }
+      },
+      "sequence": 10,
+      "emittedAt": "2026-10-03T00:00:00.000Z"
+    },
+    {
+      "type": "chat.event",
+      "payload": {
+        "sessionId": "review",
+        "revision": 0,
+        "event": {
+          "type": "entry.added",
+          "entry": {
+            "turnId": "turn-1",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "id": "assistant",
+            "itemId": "human",
+            "kind": "message",
+            "role": "assistant",
+            "text": "설명"
+          }
+        }
+      },
+      "sequence": 11,
+      "emittedAt": "2026-10-03T00:00:00.000Z"
+    },
+    {
+      "type": "chat.event",
+      "payload": {
+        "sessionId": "review",
+        "revision": 0,
+        "event": {
+          "type": "entry.added",
+          "entry": {
+            "turnId": "turn-1",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "id": "running",
+            "kind": "tool",
+            "name": "list_comments",
+            "status": "running",
+            "input": "{}"
+          }
+        }
+      },
+      "sequence": 12,
+      "emittedAt": "2026-10-03T00:00:00.000Z"
+    },
+    {
+      "type": "chat.event",
+      "payload": {
+        "sessionId": "review",
+        "revision": 0,
+        "event": {
+          "type": "entry.added",
+          "entry": {
+            "turnId": "turn-1",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "id": "completed",
+            "itemId": "human",
+            "kind": "tool",
+            "callId": "call-1",
+            "name": "list_comments",
+            "status": "completed",
+            "input": "{}",
+            "output": "[]"
+          }
+        }
+      },
+      "sequence": 13,
+      "emittedAt": "2026-10-03T00:00:00.000Z"
+    },
+    {
+      "type": "chat.event",
+      "payload": {
+        "sessionId": "review",
+        "revision": 0,
+        "event": {
+          "type": "entry.added",
+          "entry": {
+            "turnId": "turn-1",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "id": "failed",
+            "kind": "tool",
+            "name": "focus",
+            "status": "failed",
+            "input": "{}",
+            "output": ""
+          }
+        }
+      },
+      "sequence": 14,
+      "emittedAt": "2026-10-03T00:00:00.000Z"
+    },
+    {
+      "type": "chat.event",
+      "payload": {
+        "sessionId": "review",
+        "revision": 0,
+        "event": {
+          "type": "entry.added",
+          "entry": {
+            "turnId": "turn-1",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "id": "info",
+            "kind": "notice",
+            "level": "info",
+            "message": "Ready",
+            "retryable": false
+          }
+        }
+      },
+      "sequence": 15,
+      "emittedAt": "2026-10-03T00:00:00.000Z"
+    },
+    {
+      "type": "chat.event",
+      "payload": {
+        "sessionId": "review",
+        "revision": 0,
+        "event": {
+          "type": "entry.added",
+          "entry": {
+            "turnId": "turn-1",
+            "createdAt": "2026-10-03T00:00:00.000Z",
+            "id": "error",
+            "itemId": "human",
+            "kind": "notice",
+            "scope": "session",
+            "level": "error",
+            "message": "Retry",
+            "retryable": true
+          }
+        }
+      },
+      "sequence": 16,
+      "emittedAt": "2026-10-03T00:00:00.000Z"
+    },
+    {
+      "type": "chat.event",
+      "payload": {
+        "sessionId": "review",
+        "revision": 0,
+        "event": {
+          "type": "assistant.delta",
+          "entryId": "assistant",
+          "text": "한 글\n"
+        }
+      },
+      "sequence": 17,
+      "emittedAt": "2026-10-03T00:00:00.000Z"
+    },
+    {
+      "type": "chat.event",
+      "payload": {
+        "sessionId": "review",
+        "revision": 0,
+        "event": {
+          "type": "tool.completed",
+          "entryId": "completed",
+          "status": "completed",
+          "output": "[]"
+        }
+      },
+      "sequence": 18,
+      "emittedAt": "2026-10-03T00:00:00.000Z"
+    },
+    {
+      "type": "chat.event",
+      "payload": {
+        "sessionId": "review",
+        "revision": 0,
+        "event": {
+          "type": "tool.completed",
+          "entryId": "failed",
+          "status": "failed",
+          "output": ""
+        }
+      },
+      "sequence": 19,
+      "emittedAt": "2026-10-03T00:00:00.000Z"
+    },
+    {
+      "type": "chat.event",
+      "payload": {
+        "sessionId": "review",
+        "revision": 0,
+        "event": {
+          "type": "usage",
+          "usage": {
+            "inputTokens": 10,
+            "cachedInputTokens": 2,
+            "outputTokens": 3,
+            "reasoningOutputTokens": 1,
+            "totalTokens": 14
+          }
+        }
+      },
+      "sequence": 20,
+      "emittedAt": "2026-10-03T00:00:00.000Z"
+    }
+  ],
+  "focusRequests": [
+    {
+      "sessionId": "review",
+      "path": "src/한 글.rs",
+      "line": 6,
+      "side": "LEFT",
+      "startLine": 4
+    },
+    {
+      "sessionId": "review",
+      "path": "new.rs",
+      "line": 1,
+      "side": "RIGHT"
+    }
+  ],
+  "createSessionRequests": [
+    {
+      "repoId": "owner/repo",
+      "prNumber": 1,
+      "config": {
+        "main": {
+          "backend": "codex",
+          "model": "future-model",
+          "effort": "future-effort",
+          "shell": "broad",
+          "network": "free",
+          "onOutOfScope": "ask"
+        },
+        "assist": {
+          "backend": "claude",
+          "shell": "none",
+          "network": "fetch",
+          "onOutOfScope": "deny"
+        }
+      }
+    }
+  ],
+  "createSessionResponses": [
+    {
+      "session": {
+        "id": "minimal",
+        "repoId": "owner/repo",
+        "prNumber": 1,
+        "headSha": "head",
+        "baseSha": "base",
+        "worktreePath": "/state/worktrees/minimal",
+        "reviewRevision": 0,
+        "config": {
+          "main": {
+            "backend": "codex",
+            "shell": "git",
+            "network": "off",
+            "onOutOfScope": "deny"
+          }
+        },
+        "comments": [],
+        "createdAt": "2026-10-03T00:00:00.000Z"
+      },
+      "reused": false
+    }
+  ],
+  "refreshResponses": [
+    {
+      "session": {
+        "id": "minimal",
+        "repoId": "owner/repo",
+        "prNumber": 1,
+        "headSha": "head",
+        "baseSha": "base",
+        "worktreePath": "/state/worktrees/minimal",
+        "reviewRevision": 0,
+        "config": {
+          "main": {
+            "backend": "codex",
+            "shell": "git",
+            "network": "off",
+            "onOutOfScope": "deny"
+          }
+        },
+        "comments": [],
+        "createdAt": "2026-10-03T00:00:00.000Z"
+      },
+      "changed": false
+    },
+    {
+      "session": {
+        "id": "minimal",
+        "repoId": "owner/repo",
+        "prNumber": 1,
+        "headSha": "head",
+        "baseSha": "base",
+        "worktreePath": "/state/worktrees/minimal",
+        "reviewRevision": 0,
+        "config": {
+          "main": {
+            "backend": "codex",
+            "shell": "git",
+            "network": "off",
+            "onOutOfScope": "deny"
+          }
+        },
+        "comments": [],
+        "createdAt": "2026-10-03T00:00:00.000Z"
+      },
+      "changed": true,
+      "warning": "Retained worktree"
+    }
+  ],
+  "pullRequests": [
+    {
+      "number": 1,
+      "title": "Review title",
+      "url": "https://github.com/owner/repo/pull/1",
+      "author": "author",
+      "baseRef": "main",
+      "headRef": "feature",
+      "draft": false,
+      "state": "open",
+      "updatedAt": "2026-10-03T00:00:00.000Z"
+    },
+    {
+      "number": 1,
+      "title": "Review title",
+      "url": "https://github.com/owner/repo/pull/1",
+      "author": "author",
+      "baseRef": "main",
+      "headRef": "feature",
+      "draft": true,
+      "state": "closed",
+      "updatedAt": "2026-10-03T00:00:00.000Z"
+    }
+  ],
+  "pullRequestPages": [
+    {
+      "items": [
+        {
+          "number": 1,
+          "title": "Review title",
+          "url": "https://github.com/owner/repo/pull/1",
+          "author": "author",
+          "baseRef": "main",
+          "headRef": "feature",
+          "draft": false,
+          "state": "open",
+          "updatedAt": "2026-10-03T00:00:00.000Z"
+        }
+      ],
+      "page": 1,
+      "hasNextPage": false
+    }
+  ],
+  "createCommentRequests": [
+    {
+      "path": "new.rs",
+      "line": 1,
+      "side": "RIGHT",
+      "body": ""
+    },
+    {
+      "path": "src/한 글.rs",
+      "line": 6,
+      "side": "LEFT",
+      "startLine": 4,
+      "startSide": "LEFT",
+      "body": "Original behavior"
+    }
+  ],
+  "updateCommentRequests": [
+    {
+      "body": "Updated comment"
+    }
+  ],
+  "submitRequests": [
+    {
+      "event": "COMMENT"
+    },
+    {
+      "event": "APPROVE",
+      "body": "",
+      "allowStaleHead": false
+    },
+    {
+      "event": "REQUEST_CHANGES",
+      "allowStaleHead": true
+    }
+  ],
+  "chatCommands": [
+    {
+      "sessionId": "review",
+      "turnId": "turn-1",
+      "revision": 0
+    },
+    {
+      "sessionId": "review",
+      "turnId": "turn-1",
+      "revision": 1,
+      "itemId": "human"
+    }
+  ]
+}
