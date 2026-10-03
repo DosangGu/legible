@@ -1,6 +1,8 @@
 # Legible — Design Document
 
-AI-assisted GitHub PR review tool. Local daemon + web UI.
+AI-assisted GitHub PR review tool. The current implementation is a Node daemon + browser UI;
+the target is a standalone Rust daemon + desktop window, with a future VS Code extension as
+another client. Existing implementation details below remain the baseline until migrated.
 
 ---
 
@@ -35,32 +37,84 @@ A consequence worth internalizing: **recall matters more than precision.** Since
 
 ## 2. Architecture
 
+Target architecture:
+
 ```
-[Browser SPA] ──HTTP/WS──> [Legible daemon (TypeScript)]
-                                  │
-                                  ├─ git worktree management
-                                  ├─ Octokit (GitHub API)
-                                  ├─ Agent adapters ─── Claude Agent SDK
-                                  │                  └─ Codex app-server
-                                  └─ MCP server (per-session instance)
+[Desktop window: React in a WebView] ─┐
+[Browser UI, including SSH forwarding] ├─ client boundary ─ [Legible daemon (Rust)]
+[Future VS Code extension] ────────────┘                        │
+                                                                ├─ Git worktrees + GitHub API
+                                                                ├─ Claude CLI adapter
+                                                                ├─ Codex app-server adapter
+                                                                └─ per-session MCP endpoints
 ```
+
+The desktop window is an independent application, not an embedded browser tab. Its shell
+starts or attaches to a separately running daemon; closing a window does not end review sessions.
+Keep the daemon's domain model, persistence, GitHub writes, and agent subprocesses out of every
+UI host. The desktop shell framework is not selected yet. Reuse the existing React review UI in
+an embedded WebView rather than rewriting the diff viewer in a native widget toolkit.
 
 ### Principles
 
 - **One daemon per machine.** It holds multiple repos and multiple PRs.
-- **Review sessions are decoupled from browser tab lifetime.** Close the tab, the session survives; reopen and it resumes.
-- **The daemon is the sole credential holder.** No GitHub token ever reaches an agent process.
+- **Review sessions are decoupled from client lifetime.** Close the desktop window, browser tab,
+  or future VS Code view; the session survives and can be reopened.
+- **The daemon is the sole GitHub/agent credential boundary.** No GitHub token ever reaches an
+  agent process or UI client.
+- **Clients share a versioned daemon contract.** A desktop, browser, or editor client must not
+  own a second implementation of review, worktree, or submission logic.
 
 ### Stack
 
-| Layer | Choice | Why |
+| Layer | Current implementation | Target |
 |---|---|---|
-| Daemon | TypeScript (Node) | Official Claude Agent SDK, `codex app-server generate-ts` for typed clients, shared types with the frontend |
-| Frontend | Vite + React SPA | Next.js presupposes its own server → duplicates the daemon. No SSR/SEO need |
-| Editor | CodeMirror 6 | Read-only plus inline widgets maps exactly onto the decoration model. Lighter than Monaco |
-| GitHub | Octokit (REST + GraphQL) | Shelling out to `gh` means fragile output parsing |
+| Daemon | TypeScript (Node) | Standalone Rust process; preserve the observable HTTP/WebSocket and state contracts during migration |
+| Review UI | Vite + React browser SPA | Reuse React + CodeMirror in the desktop WebView; keep browser access and make host integration replaceable |
+| GitHub | Octokit (REST + GraphQL) | Daemon-owned GitHub API client; `gh` remains an authentication broker, not a review API |
+| Agents | Claude Agent SDK; Codex app-server | Direct Rust clients of the locally installed official Claude CLI and Codex app-server |
 
-Next.js was ruled out not because Node is unavailable — Claude Code requires Node, so it is always present — but because **it would create a second request-handling layer** alongside the daemon.
+Node remains a development/build dependency for the React UI, not a required Legible daemon
+runtime. Neither agent SDK nor a community Rust wrapper is part of the target daemon. Agent
+executables, `git`, and `gh` remain external prerequisites for the operations that use them;
+whether to bundle any of those tools is a later distribution decision. The current npm workspace
+and commands remain valid for the Node baseline during migration; npm continues to build the
+React UI after the Rust daemon replaces that baseline.
+
+### Repository workspaces
+
+Use a root Cargo workspace for Rust packages, alongside the npm workspace for React and future
+TypeScript clients. Cargo owns Rust dependency resolution, builds, tests, formatting, and linting;
+npm owns the frontend tooling. Cargo does not replace the JavaScript package manager.
+
+Target layout, introduced incrementally:
+
+```
+Cargo.toml                 root Rust workspace
+Cargo.lock                 locked Rust dependencies
+crates/protocol/           normalized wire models shared by Rust clients and daemon
+crates/daemon/             daemon services, CLI entry points, and direct agent adapters
+apps/desktop/              future Rust desktop-shell workspace member
+apps/web/                  existing React UI, built with npm
+packages/protocol/         TypeScript bindings for the shared wire contract
+apps/daemon/               Node comparison implementation, retained during migration
+```
+
+The daemon crate must build and run independently of the desktop member and its GUI dependencies.
+The desktop member is added when its framework is selected. A future VS Code extension belongs
+to the npm workspace and connects to the daemon contract; it does not become a Cargo member.
+
+Keep one authoritative wire contract. During migration, the existing TypeScript types and recorded
+fixtures define compatibility. Once ported, the Rust protocol crate owns the serializable models
+and produces the TypeScript bindings through a shared schema/generation step; do not maintain two
+independent copies of the same HTTP and event types. Select the generator when porting the contract
+and verify its output against the existing payload fixtures.
+
+Add Cargo checks to CI alongside the existing npm checks as soon as the first Rust crates exist:
+`cargo check --workspace`, `cargo test --workspace`, `cargo fmt --all -- --check`, and
+`cargo clippy --workspace --all-targets -- -D warnings`. Keep Rust toolchain settings and common
+dependency versions in the workspace configuration. Build output belongs in Cargo's `target/`;
+frontend output remains in its workspace's `dist/`.
 
 ### Startup and CLI lifecycle
 
@@ -315,16 +369,22 @@ interface AgentBackend {
 }
 ```
 
-**Do not let vendor schemas leak into the core.** The two CLIs emit fundamentally different event shapes; adapters normalize to the model above.
+**Do not let vendor schemas leak into the core.** The TypeScript interface above describes the
+existing observable contract, not a requirement to use TypeScript in the daemon. Rust adapters
+must normalize the two CLI event shapes to the same domain events.
 
 ### Match the shape on both sides
 
-| | One-shot | Stateful |
+| | Existing Node adapter | Target Rust adapter |
 |---|---|---|
-| Claude Code | `claude -p` | **Agent SDK** ← use this |
-| Codex | `codex exec --json` | **`codex app-server`** ← use this |
+| Claude Code | Agent SDK over local `claude` | Direct CLI headless JSON stream, with persistent input/session control verified before replacement |
+| Codex | `codex app-server` over stdio | Direct `codex app-server` JSON-RPC over stdio |
 
-Both go stateful. Mixing `claude -p` with `app-server` forces the interface to cover one-shot and stateful at once, and it collapses to the lowest common denominator.
+Both adapters must retain the existing stateful `send` / `interrupt` / `close` behavior. A
+sequence of unrelated one-shot calls is not an acceptable substitute for a live session. Pin
+and test the CLI versions used by the adapters; fail visibly if a version cannot provide the
+required stream, cancellation, MCP, or safety behavior. Do not read CLI-owned credentials or
+replace either CLI's agent loop with raw model API calls.
 
 `app-server` is bidirectional, so approval requests arrive inbound. Pinning read-only and auto-handling approvals erases that difference at the event-model level.
 
@@ -397,10 +457,12 @@ repository guidance. Reject incompatible managed executable customizations befor
 Skills may be read as text. These controls are a tool boundary, not a filesystem read sandbox;
 `network: off` disables research tools, not the CLI's model/authentication traffic.
 
-Step 8C uses a persistent SDK streaming-input query and the local `claude` executable. Acquire the
-base-config projection before startup and release only after process exit. Keep restoration conflicts
-visible and block reuse or cleanup. Authentication and projection notices apply to main and per-item
-chats. Step 8D subordinate mode remains deferred.
+The current step 8C uses a persistent SDK streaming-input query and the local `claude` executable.
+The Rust replacement must reproduce its observable session behavior through the CLI's headless
+stream before the SDK is removed. Acquire the base-config projection before startup and release
+only after process exit. Keep restoration conflicts visible and block reuse or cleanup.
+Authentication and projection notices apply to main and per-item chats. Step 8D subordinate mode
+remains deferred.
 
 ### Do not validate model or effort
 
@@ -557,7 +619,7 @@ Because it is a local array, edits like "soften #3" or "merge #1 and #4" happen 
 
 ---
 
-## 10. Web UI
+## 10. Review UI and Client Hosts
 
 ### Screens
 
@@ -567,7 +629,30 @@ Because it is a local array, edits like "soften #3" or "merge #1 and #4" happen 
 /review/:sessionId       review screen
 ```
 
-SPA router. The WebSocket must survive screen transitions so concurrent review status stays visible in one UI.
+The current browser SPA uses these routes. Its WebSocket survives screen transitions so concurrent
+review status stays visible. The desktop window should reuse these review components; host-specific
+navigation, daemon connection, and authentication must not be embedded in the diff or chat views.
+
+### Client boundary for desktop and future VS Code
+
+Expose a small UI-side connection interface for authenticated requests, event subscriptions,
+reconnect/snapshot recovery, and navigation. The current browser implementation uses same-origin
+HTTP/WebSocket and URL-fragment bootstrap authentication. A desktop host can initially use the
+same daemon API, but WebView-specific APIs must remain in its host adapter. Do not make the
+React review components depend on a particular desktop framework.
+
+A future VS Code extension is a thin client of the same daemon, not another daemon or agent
+implementation. In remote workspaces, its
+[workspace extension host](https://code.visualstudio.com/api/advanced-topics/remote-extensions)
+runs beside the checkout and daemon, while its Webview runs on the user's machine. The Webview
+should use [message passing](https://code.visualstudio.com/api/extension-guides/webview) through
+the extension host rather than assume that `localhost` names the daemon host. The extension host
+owns daemon connection details; bootstrap tokens and agent/GitHub credentials must
+not be sent to Webview code. Reuse React review components where practical, while allowing a
+separate entry point, asset URLs, content-security policy, and navigation for VS Code. Native
+editor decorations or a full browser-based VS Code extension are not required for the first
+extension release. The extension host may use VS Code's Node runtime without making Node a
+runtime dependency of the Rust daemon.
 
 ### First run
 
@@ -712,6 +797,11 @@ remain outside this increment; no model invocation or MCP expansion is involved.
   require authentication and local Host/Origin checks. Missing mutation/WS origins are rejected.
   Agent MCP retains separate session-bound bearer auth. Never log tokens, cookies, or auth bodies.
 - Design the daemon API to be **network-transparent** (WebSocket + token). A Unix-socket-only design has to be torn out when one UI needs to attach to daemons on several machines.
+- The browser's URL-fragment-to-cookie exchange is a browser entry flow, not the only client
+  authentication mechanism. Desktop and editor hosts may obtain daemon access through a private
+  local control channel, but must not expose the bootstrap secret to embedded WebView code.
+  Version the client/daemon contract so an older desktop app or extension fails clearly against
+  an incompatible daemon instead of misinterpreting review state.
 
 ### Over SSH
 
@@ -732,8 +822,9 @@ An overlay network like Tailscale removes the problem entirely, but the tool mus
 
 - Run the CLI/SDK through supported paths. **Never read OAuth credentials from `~/.claude` and call `api.anthropic.com` directly.** That is the pattern that actually caused trouble.
 - On distribution, each user runs with their own credentials. Do not relay the developer's account.
-- Distribution and commercial use must follow the current SDK license and Commercial Terms;
-  do not assume the SDK is MIT-licensed or that a paid subscription guarantees included usage.
+- Distribution and commercial use of the current Node build must follow the SDK license and
+  Commercial Terms. The target CLI-based build needs its own terms review; do not assume a paid
+  subscription guarantees included usage.
 - Branding: the product must not look like Claude Code or any Anthropic product. Maintain its own identity.
 - This area changes often. Re-check the Usage Policy and Commercial Terms at the point of any distribution decision.
 
@@ -750,12 +841,16 @@ currently says the announced SDK/headless billing separation is paused. This is 
 promise: inherited API keys can select API billing, provider credentials follow provider billing,
 and enabled usage credits can incur additional charges. Show only the CLI-reported authentication
 category, without email, organization identifiers, or tokens; never change the user's auth method.
+The SDK-specific statements describe the current Node build. Recheck the applicable CLI terms and
+billing guidance before distributing the Rust build; changing the client language does not settle
+the user's billing or redistribution rights.
 
 ---
 
 ## 13. Implementation Order
 
-Riskiest first. **Follow the order.**
+The original Node/browser implementation order is retained below as a record of the existing
+baseline. Do not restart these milestones merely because the runtime changes.
 
 | # | Step | Notes |
 |---|---|---|
@@ -785,6 +880,27 @@ Keep the adapter core separate from its HTTP/WebSocket and UI integration. Prove
 contract first, wire the main chat second, and add the second backend only after the first backend's
 session lifecycle has settled.
 
+### Rust/desktop migration
+
+1. Freeze the existing API, event, persistence, and safety behavior with contract fixtures and
+   process tests, then introduce the root Cargo workspace with protocol and daemon crates alongside
+   the existing npm workspace. Decide and document a versioned state migration before replacing a
+   user's installed daemon; never silently discard saved reviews or worktrees.
+2. Establish the standalone Rust daemon and CLI lifecycle while preserving local-only binding,
+   authenticated browser access, singleton ownership, and the current review API. Keep the Node
+   daemon available as the comparison implementation until parity is demonstrated.
+3. Port domain services and the Codex app-server adapter, then port the Claude CLI adapter after
+   proving persistent streaming, interruption, tool restrictions, MCP initialization checks,
+   and base-config projection with real-process tests. Remove the SDK only after that parity gate.
+4. Separate the React connection/navigation layer from review components, then add the desktop
+   WebView shell. Verify local use and an SSH-connected daemon before changing distribution.
+5. Package and smoke-test the chosen desktop platforms. Build a VS Code extension only as a later
+   client of the same versioned daemon contract; test both local and Remote-SSH extension hosts.
+
+The desktop framework, first release platforms, updater, and whether external tools are bundled
+remain distribution decisions. They must not determine the daemon domain model or make a future
+VS Code client dependent on the desktop shell.
+
 ---
 
 ## Appendix: Packaging
@@ -800,10 +916,15 @@ session lifecycle has settled.
 
 Users type `legible`.
 
-The local distribution smoke build stages one private package under `dist/package`: compiled daemon
-and web assets, plus a bundled copy of the browser-safe protocol package. It does not publish to
-npm or select a public release scope. An isolated tarball-install test checks the CLI, daemon
-startup, and static assets before any release work.
+The current local distribution smoke build stages one private npm package under `dist/package`:
+compiled Node daemon and web assets, plus a bundled copy of the browser-safe protocol package.
+It does not publish to npm or select a public release scope. An isolated tarball-install test
+checks the current CLI, daemon startup, and static assets.
+
+The target distribution contains a Rust daemon executable, the desktop shell, and built UI
+assets. The same daemon executable must also be runnable without a desktop window on an SSH host.
+Keep per-platform binaries, signing, updates, and optional tool bundling separate from the
+browser/API contract; the current npm tarball is not the desktop release format.
 
 ### Casing
 

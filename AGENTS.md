@@ -2,7 +2,9 @@
 
 ## Project Structure & Module Organization
 
-This npm workspace separates runnable applications from reusable contracts. `apps/daemon` contains the feature-grouped Node daemon, `apps/web` contains the Vite/React SPA, and `packages/protocol` contains browser-safe HTTP/WebSocket types and domain models. Tests live beside source as `*.test.ts` or `*.test.tsx`; shared fixtures belong in `src/testing/` and are excluded from production builds. Generated output belongs in each workspace's `dist/`. `DESIGN.md` remains the authoritative architecture specification.
+This npm workspace is the current implementation. `apps/daemon` contains the feature-grouped Node daemon, `apps/web` contains the Vite/React SPA, and `packages/protocol` contains browser-safe HTTP/WebSocket types and domain models. Tests live beside source as `*.test.ts` or `*.test.tsx`; shared fixtures belong in `src/testing/` and are excluded from production builds. Generated output belongs in each workspace's `dist/`. `DESIGN.md` remains the authoritative architecture specification, including the planned standalone Rust daemon, desktop window, and future VS Code client. Do not treat that target architecture as already implemented.
+
+The planned Rust packages belong to a root Cargo workspace: `crates/protocol`, `crates/daemon`, and later `apps/desktop`. Keep the daemon independent of desktop GUI dependencies. React and future TypeScript clients retain npm tooling. Add Cargo checks alongside npm checks when the Rust crates are introduced; keep the Node daemon as the comparison implementation until parity is verified. Rust output belongs in `target/`.
 
 ## Build, Test, and Development Commands
 
@@ -17,7 +19,7 @@ npm run format:check  # verify Prettier formatting
 npm run check         # run every CI validation
 ```
 
-Run workspace-specific commands with `npm run <script> --workspace @legible/<name>`. The eventual CLI will expose `legible`, `legible pr <number>`, and `legible add <path>`.
+Run workspace-specific commands with `npm run <script> --workspace @legible/<name>`. The current CLI exposes `legible`, `legible pr <number>`, and `legible add <path>`.
 
 ## Coding Style & Naming Conventions
 

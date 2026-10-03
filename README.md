@@ -1,8 +1,19 @@
 # Legible
 
-Legible is an AI-assisted GitHub pull request review tool built as a local daemon and a
-browser UI. The review workflow is under active development; see [`DESIGN.md`](./DESIGN.md) for
-the product and architecture specification.
+Legible is an AI-assisted GitHub pull request review tool. The current implementation is a
+Node daemon and browser UI; the commands below describe that working version. See
+[`DESIGN.md`](./DESIGN.md) for the product and architecture specification.
+
+The planned next architecture is a standalone Rust daemon plus an independent desktop window
+that reuses the React review UI. Rust will talk directly to the locally installed `claude` CLI
+and `codex app-server`, without an agent SDK dependency. The daemon remains usable without the
+desktop window on an SSH host. A future VS Code extension can use the same daemon as another
+client; it will not embed a second review engine. This migration is not implemented yet, and
+the current npm package is not a desktop installer.
+
+The Rust migration will add a root Cargo workspace for protocol, daemon/CLI, and desktop-shell
+crates. The React UI and future VS Code extension will keep npm tooling. Cargo and npm will coexist
+in the repository; the current Node daemon stays available while the Rust replacement is verified.
 
 ## Development
 
