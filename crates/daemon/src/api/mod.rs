@@ -1,17 +1,10 @@
-//! Authenticated, read-only HTTP application. Construction does not bind, open state, or run agents.
+//! Authenticated HTTP reads and WebSocket events. Construction never binds, loads, or runs agents.
 
 mod access;
 mod error;
+mod events;
 
-use std::{
-    io,
-    net::SocketAddr,
-    sync::{
-        Arc,
-        atomic::{AtomicU8, Ordering},
-    },
-    time::Instant,
-};
+use std::{io, net::SocketAddr, sync::Arc, time::Instant};
 
 use axum::{
     Json, Router,
@@ -28,11 +21,12 @@ use legible_protocol::{
     ChatSnapshot, ChatStatus, DaemonHealth, DraftComment, PreflightReport, ReviewSession,
 };
 use serde::Deserialize;
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, sync::watch};
 
 use crate::{
     VERSION,
-    sessions::{SessionRegistry, SessionService},
+    sessions::SessionService,
+    state::{DaemonState, SessionView},
 };
 
 pub use access::BrowserAccess;
@@ -53,24 +47,22 @@ const CONTENT_SECURITY_POLICY: &str = concat!(
 );
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
 pub enum DaemonPhase {
     Starting,
     Ready,
     Stopping,
 }
 
-/// This slice holds a read-only service. Future mutations need a serialized blocking owner,
-/// not filesystem operations on HTTP tasks. The runtime claims singleton ownership before load.
+/// HTTP reads and events use the same serialized owner. The runtime must claim singleton
+/// ownership before loading state; router construction does not complete startup or checkpoint it.
 #[derive(Clone)]
 pub struct ApiState(Arc<InnerState>);
 
 struct InnerState {
-    sessions: SessionService,
-    preflight: PreflightReport,
+    owner: DaemonState,
     access: BrowserAccess,
     started_at: Instant,
-    phase: AtomicU8,
+    phase: watch::Sender<DaemonPhase>,
 }
 
 impl ApiState {
@@ -78,31 +70,29 @@ impl ApiState {
         sessions: SessionService,
         preflight: PreflightReport,
         access: BrowserAccess,
-    ) -> Self {
-        Self(Arc::new(InnerState {
-            sessions,
-            preflight,
+    ) -> io::Result<Self> {
+        let owner = DaemonState::start(sessions, preflight)?;
+        let (phase, _) = watch::channel(DaemonPhase::Starting);
+
+        Ok(Self(Arc::new(InnerState {
+            owner,
             access,
             started_at: Instant::now(),
-            phase: AtomicU8::new(DaemonPhase::Starting as u8),
-        }))
+            phase,
+        })))
     }
 
     /// Readiness is explicit; constructing a router never claims that startup has completed.
     pub fn set_phase(&self, phase: DaemonPhase) {
-        self.0.phase.store(phase as u8, Ordering::Release);
+        self.0.phase.send_replace(phase);
     }
 
     pub fn phase(&self) -> DaemonPhase {
-        match self.0.phase.load(Ordering::Acquire) {
-            0 => DaemonPhase::Starting,
-            1 => DaemonPhase::Ready,
-            _ => DaemonPhase::Stopping,
-        }
+        *self.0.phase.borrow()
     }
 
-    fn registry(&self) -> &SessionRegistry {
-        self.0.sessions.registry()
+    pub fn owner(&self) -> &DaemonState {
+        &self.0.owner
     }
 }
 
@@ -128,6 +118,7 @@ pub fn build_app(state: ApiState) -> Router {
         )
         .route("/api/health", get(health))
         .route("/api/preflight", get(preflight))
+        .route("/api/events", get(events::upgrade))
         .merge(session_routes())
         .fallback(not_found)
         .method_not_allowed_fallback(method_not_allowed)
@@ -265,20 +256,22 @@ async fn authenticated() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "authenticated": true }))
 }
 
-async fn health(State(state): State<ApiState>) -> Json<DaemonHealth> {
-    Json(DaemonHealth {
-        status: state.0.preflight.status,
+async fn health(State(state): State<ApiState>) -> Result<Json<DaemonHealth>, ApiFailure> {
+    let preflight = state.owner().preflight().await?;
+
+    Ok(Json(DaemonHealth {
+        status: preflight.status,
         version: VERSION.into(),
         uptime_seconds: state.0.started_at.elapsed().as_secs(),
-    })
+    }))
 }
 
-async fn preflight(State(state): State<ApiState>) -> Json<PreflightReport> {
-    Json(state.0.preflight.clone())
+async fn preflight(State(state): State<ApiState>) -> Result<Json<PreflightReport>, ApiFailure> {
+    Ok(Json(state.owner().preflight().await?))
 }
 
-async fn sessions(State(state): State<ApiState>) -> Json<Vec<ReviewSession>> {
-    Json(state.registry().list().cloned().collect())
+async fn sessions(State(state): State<ApiState>) -> Result<Json<Vec<ReviewSession>>, ApiFailure> {
+    Ok(Json(state.owner().sessions().await?))
 }
 
 type SessionPath = Result<Path<String>, PathRejection>;
@@ -288,7 +281,9 @@ async fn session(
     path: SessionPath,
 ) -> Result<Json<ReviewSession>, ApiFailure> {
     let id = session_id(path)?;
-    Ok(Json(find_session(&state, &id)?.clone()))
+    let view = find_session(&state, &id).await?;
+
+    Ok(Json(view.session))
 }
 
 async fn comments(
@@ -297,8 +292,9 @@ async fn comments(
     headers: HeaderMap,
 ) -> Result<Json<Vec<DraftComment>>, ApiFailure> {
     let id = session_id(path)?;
-    let session = current_session(&state, &id, &headers)?;
-    Ok(Json(session.comments.clone()))
+    let view = current_session(&state, &id, &headers).await?;
+
+    Ok(Json(view.session.comments))
 }
 
 async fn chat(
@@ -307,11 +303,11 @@ async fn chat(
     headers: HeaderMap,
 ) -> Result<Json<ChatSnapshot>, ApiFailure> {
     let id = session_id(path)?;
-    let session = current_session(&state, &id, &headers)?;
+    let view = current_session(&state, &id, &headers).await?;
 
-    let snapshot = match state.registry().chat(&id) {
-        Some(chat) => chat.snapshot.clone(),
-        None => unavailable_chat(session),
+    let snapshot = match view.chat {
+        Some(snapshot) => snapshot,
+        None => unavailable_chat(&view.session),
     };
 
     Ok(Json(snapshot))
@@ -346,8 +342,8 @@ fn session_id(path: SessionPath) -> Result<String, ApiFailure> {
     })
 }
 
-fn find_session<'a>(state: &'a ApiState, id: &str) -> Result<&'a ReviewSession, ApiFailure> {
-    state.registry().get(id).ok_or_else(|| {
+async fn find_session(state: &ApiState, id: &str) -> Result<SessionView, ApiFailure> {
+    state.owner().session(id).await?.ok_or_else(|| {
         ApiFailure::new(
             StatusCode::NOT_FOUND,
             "session_not_found",
@@ -356,15 +352,15 @@ fn find_session<'a>(state: &'a ApiState, id: &str) -> Result<&'a ReviewSession, 
     })
 }
 
-fn current_session<'a>(
-    state: &'a ApiState,
+async fn current_session(
+    state: &ApiState,
     id: &str,
     headers: &HeaderMap,
-) -> Result<&'a ReviewSession, ApiFailure> {
-    let session = find_session(state, id)?;
+) -> Result<SessionView, ApiFailure> {
+    let view = find_session(state, id).await?;
     let revision = review_revision(headers)?;
 
-    if session.review_revision != revision {
+    if view.session.review_revision != revision {
         return Err(ApiFailure::new(
             StatusCode::CONFLICT,
             "stale_review_revision",
@@ -372,7 +368,7 @@ fn current_session<'a>(
         ));
     }
 
-    Ok(session)
+    Ok(view)
 }
 
 fn review_revision(headers: &HeaderMap) -> Result<u64, ApiFailure> {

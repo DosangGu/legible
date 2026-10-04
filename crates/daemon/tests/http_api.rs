@@ -42,7 +42,7 @@ impl Fixture {
 
         let access = BrowserAccess::new().unwrap();
         let token = access.bootstrap_token().to_owned();
-        let state = ApiState::new(service, report(), access);
+        let state = ApiState::new(service, report(), access).unwrap();
         let app = build_app(state.clone());
 
         state.set_phase(DaemonPhase::Ready);
@@ -711,7 +711,7 @@ async fn new_application_state_starts_gated() {
     let store = SessionStore::new(root.path()).unwrap();
     let service = SessionService::open(store).unwrap();
     let access = BrowserAccess::new().unwrap();
-    let state = ApiState::new(service, report(), access);
+    let state = ApiState::new(service, report(), access).unwrap();
 
     assert_eq!(state.phase(), DaemonPhase::Starting);
 
@@ -729,7 +729,7 @@ async fn new_application_state_starts_gated() {
 async fn unknown_routes_and_unsupported_methods_have_structured_errors() {
     let fixture = Fixture::new().await;
 
-    for path in ["/api/unknown", "/api/events"] {
+    for path in ["/api/unknown", "/api/not-a-route"] {
         let response = fixture.send(fixture.get(path)).await;
 
         assert_error(response, StatusCode::NOT_FOUND, "not_found").await;
@@ -745,6 +745,19 @@ async fn unknown_routes_and_unsupported_methods_have_structured_errors() {
         response,
         StatusCode::METHOD_NOT_ALLOWED,
         "method_not_allowed",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn event_endpoint_requires_a_valid_upgrade_after_authentication() {
+    let fixture = Fixture::new().await;
+    let response = fixture.send(fixture.get("/api/events")).await;
+
+    assert_error(
+        response,
+        StatusCode::BAD_REQUEST,
+        "invalid_websocket_request",
     )
     .await;
 }

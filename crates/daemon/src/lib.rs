@@ -1,7 +1,8 @@
-//! Rust daemon domain services and HTTP application. The executable does not start them yet.
+//! Rust daemon domain services and HTTP/WebSocket application. The binary does not start them yet.
 
 pub mod api;
 pub mod sessions;
+pub mod state;
 
 pub use legible_protocol as protocol;
 

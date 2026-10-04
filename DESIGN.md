@@ -183,8 +183,34 @@ Session list/detail establish the current revision. Comments/chat require an exp
 `X-Legible-Review-Revision` (400 if missing/invalid, 409 if stale) rather than assuming revision 0.
 Archived/deleting records remain readable without allowing mutations. Return only recovered chat
 snapshots, not internal active/retry requests; absent chats are unavailable and never launch an
-agent. The service is immutable in this slice: move mutations to a serialized blocking owner when
-adding command/event integration. Rust static UI serving and `/api/events` remain unimplemented.
+agent. The fourth slice initially held an immutable service; the fifth slice below adds serialized
+ownership and event integration. Rust static UI serving and HTTP mutation routes remain unimplemented.
+
+The fifth slice adds a dedicated blocking state owner with a bounded 64-command queue. HTTP
+reads, internal session mutations, preflight updates, and event subscriptions share this owner;
+filesystem operations never run on transport tasks. Queueing a mutation transfers responsibility
+to the owner: a disconnected caller does not cancel an accepted durable operation. Dropping all
+handles drains queued jobs and exits without an implicit checkpoint; production shutdown must
+still explicitly stop accepting work, flush, and release singleton ownership.
+
+Authenticated `GET /api/events` upgrades use the same browser cookie and local Host/Origin checks,
+never a desktop/editor exemption or bootstrap/bearer credential shortcut. Capture the initial
+`daemon.snapshot` and subscription in one owner operation so concurrent mutations cannot fall
+between them. The snapshot carries the current sequence; only successful changes advance it.
+Reserve a safe JavaScript integer sequence before persistence, then publish the returned lifecycle
+event after the durable service mutation. Failed changes leave state and sequence untouched.
+Each daemon instance starts at sequence 0; reconnect always receives a fresh snapshot rather than
+replaying retained history. Scoped chat snapshots are reloaded through the HTTP read API.
+
+Broadcast immutable events through a 128-entry ring so slow clients cannot block state changes.
+If a subscriber misses deltas, close with 1013 and require a reconnect snapshot instead of
+silently continuing. Incoming application text/binary frames close with 1008; transport ping/pong
+and close acknowledgements are supported. Bound incoming frames/messages to 64 KiB and every
+socket write/control reply to five seconds. Leaving `ready` closes existing streams with 1001;
+new upgrades receive the same 503 readiness response as HTTP. Disconnecting clients drops only
+their subscriptions, never session ownership or agent state. The binary remains informational:
+production startup/singleton/shutdown, HTTP commands, static UI serving, and live agents are
+subsequent slices.
 
 ### Startup and CLI lifecycle
 

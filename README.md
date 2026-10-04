@@ -10,9 +10,9 @@ and `codex app-server`, without an agent SDK dependency. The daemon remains usab
 desktop window on an SSH host. A future VS Code extension can use the same daemon as another
 client; it will not embed a second review engine. Direct browser access remains supported in the
 target architecture: every client uses the same HTTP/JSON API and WebSocket event contract.
-The Cargo workspace, shared Rust wire models, session storage/registry/recovery, and authenticated
-read-only HTTP application are implemented as libraries. Production daemon startup, WebSocket
-delivery, agent execution, and the desktop shell have not been ported yet.
+The Cargo workspace, shared Rust wire models, session storage/registry/recovery, serialized state
+owner, and authenticated HTTP/WebSocket application are implemented as libraries. Production
+daemon startup, HTTP mutations, agent execution, and the desktop shell have not been ported yet.
 The current npm package runs the Node implementation.
 
 The root Cargo workspace contains `crates/protocol` and the `crates/daemon` library/scaffold. The desktop
@@ -79,12 +79,12 @@ lifecycle event. Callers pass the expected review revision; draft updates reject
 reviews. Interrupted chats become failed without starting an agent, keep retry requests and partial
 tool output, and clear live-turn hints. An explicit `flush()` checkpoints recovery for the next
 restart and reports every failed save. These are library operations only: production HTTP startup,
-the live chat loop, event transport, and the 200 ms streaming-write scheduler are still unimplemented
-in Rust.
+the live chat loop, and the 200 ms streaming-write scheduler are still unimplemented in Rust.
 
-`crates/daemon/src/api` provides a read-only Axum application. It does not open state, probe tools,
-checkpoint recovery, or start agents. The caller supplies a loaded session service and preflight
-report, and explicitly changes readiness from `starting` to `ready`. Starting/stopping applications
+`crates/daemon/src/api` provides HTTP reads and a read-only WebSocket event stream. It does not open
+state, probe tools, checkpoint recovery, or start agents. The caller supplies a loaded session
+service and preflight report, and explicitly changes readiness from `starting` to `ready`.
+Starting/stopping applications
 return 503 with `Retry-After`. A listener helper rejects non-loopback addresses; production singleton
 ownership and graceful shutdown are still future work.
 
@@ -96,9 +96,21 @@ bootstrap tokens and MCP-style bearer tokens cannot authenticate ordinary reads.
 reads require an explicit `X-Legible-Review-Revision`; malformed/missing values return 400 and
 stale revisions return 409. Archived/deleting records remain readable. Chat responses expose only
 the recovered snapshot, never internal active/retry requests; missing snapshots are unavailable
-without starting an agent. Static UI serving and `/api/events` are not implemented in this slice.
-The executable remains informational; the HTTP tests use temporary state and include a real
-loopback request.
+without starting an agent. Static UI serving and HTTP mutation routes are not implemented yet.
+The executable remains informational; HTTP/WebSocket tests use temporary state and real loopback
+connections.
+
+`DaemonState` owns the synchronous service on one dedicated thread. HTTP reads and internal
+mutations use a bounded command queue; events are published only after successful persistence.
+`GET /api/events` requires the same cookie and local Host/Origin checks as HTTP, including a
+mandatory same-origin Origin. Each connection begins with an atomic `daemon.snapshot` at the
+current sequence, followed by ordered deltas. Snapshots do not advance the sequence, and failed
+mutations do not consume it. Reconnecting replaces missed history with a fresh snapshot; clients
+reload scoped chat snapshots through HTTP. The event ring retains at most 128 deltas; lagged
+connections close with 1013 instead of skipping changes. Text/binary commands close with 1008,
+ping/pong and close acknowledgements remain supported, and leaving `ready` closes existing
+connections with 1001. Socket writes have a five-second deadline. Client disconnects never remove
+sessions or cancel already-queued mutations; checkpoints remain explicit.
 
 ## Open a review
 
