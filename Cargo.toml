@@ -10,12 +10,26 @@ rust-version = "1.85"
 publish = false
 
 [workspace.dependencies]
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
+base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
+getrandom = { version = "0.3", features = ["std"] }
 legible-protocol = { path = "crates/protocol" }
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+subtle = "2"
 tempfile = "3"
+tokio = { version = "1", features = [
+    "net",
+    "rt-multi-thread",
+    "macros",
+    "io-util",
+    "sync",
+    "time",
+] }
+tower = { version = "0.5", features = ["util"] }
+uuid = { version = "1", features = ["v4"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -8,9 +8,11 @@ The planned next architecture is a standalone Rust daemon plus an independent de
 that reuses the React review UI. Rust will talk directly to the locally installed `claude` CLI
 and `codex app-server`, without an agent SDK dependency. The daemon remains usable without the
 desktop window on an SSH host. A future VS Code extension can use the same daemon as another
-client; it will not embed a second review engine. The Cargo workspace, shared Rust wire models,
-and session-store library are implemented; HTTP serving, daemon lifecycle, and the desktop shell
-have not been ported yet.
+client; it will not embed a second review engine. Direct browser access remains supported in the
+target architecture: every client uses the same HTTP/JSON API and WebSocket event contract.
+The Cargo workspace, shared Rust wire models, session storage/registry/recovery, and authenticated
+read-only HTTP application are implemented as libraries. Production daemon startup, WebSocket
+delivery, agent execution, and the desktop shell have not been ported yet.
 The current npm package runs the Node implementation.
 
 The root Cargo workspace contains `crates/protocol` and the `crates/daemon` library/scaffold. The desktop
@@ -69,8 +71,34 @@ with explicit review revisions, from an explicitly supplied state directory. Sav
 private temporary file and atomic rename. `crates/daemon/tests/fixtures/session-records.json`
 covers drafts, submission history, both agent backends, and chat requests. There is no legacy
 reader or version conversion. Loading does not rewrite records or resume agents. Unknown fields,
-invalid metadata, and symlinked records fail closed. Live restoration and write scheduling remain
-in Node until their own rewrite slice.
+invalid metadata, and symlinked records fail closed.
+
+`SessionService` opens and recovers all records before exposing a read-only `SessionRegistry`.
+Adds/replacements/removals finish on disk before changing registry ownership or returning a
+lifecycle event. Callers pass the expected review revision; draft updates reject archived/deleting
+reviews. Interrupted chats become failed without starting an agent, keep retry requests and partial
+tool output, and clear live-turn hints. An explicit `flush()` checkpoints recovery for the next
+restart and reports every failed save. These are library operations only: production HTTP startup,
+the live chat loop, event transport, and the 200 ms streaming-write scheduler are still unimplemented
+in Rust.
+
+`crates/daemon/src/api` provides a read-only Axum application. It does not open state, probe tools,
+checkpoint recovery, or start agents. The caller supplies a loaded session service and preflight
+report, and explicitly changes readiness from `starting` to `ready`. Starting/stopping applications
+return 503 with `Retry-After`. A listener helper rejects non-loopback addresses; production singleton
+ownership and graceful shutdown are still future work.
+
+The application supports `POST /api/auth`, `GET /api/auth`, `/api/health`, `/api/preflight`,
+`/api/sessions`, `/api/sessions/:id`, `/api/sessions/:id/comments`, and `/api/sessions/:id/chat`.
+The auth exchange accepts a bounded JSON bootstrap token and sets a distinct per-instance
+HttpOnly/SameSite=Strict cookie. Local Host/Origin checks reject rebinding and cross-origin requests;
+bootstrap tokens and MCP-style bearer tokens cannot authenticate ordinary reads. Comments/chat
+reads require an explicit `X-Legible-Review-Revision`; malformed/missing values return 400 and
+stale revisions return 409. Archived/deleting records remain readable. Chat responses expose only
+the recovered snapshot, never internal active/retry requests; missing snapshots are unavailable
+without starting an agent. Static UI serving and `/api/events` are not implemented in this slice.
+The executable remains informational; the HTTP tests use temporary state and include a real
+loopback request.
 
 ## Open a review
 

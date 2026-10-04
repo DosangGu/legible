@@ -65,6 +65,20 @@ an embedded WebView rather than rewriting the diff viewer in a native widget too
 - **Clients share a versioned daemon contract.** A desktop, browser, or editor client must not
   own a second implementation of review, worktree, or submission logic.
 
+### Client/daemon transport
+
+Keep direct browser access as a first-class client, including through an SSH-forwarded port.
+Use **HTTP/JSON for queries and commands, and WebSocket for read-only daemon events**. Desktop
+and future editor hosts use the same contract through their connection adapters; there is no
+separate gRPC API or requirement to route a browser through a native host. Do not move ordinary
+commands into a single bidirectional message stream just to share the event connection.
+
+The contract and domain services stay separate from the transport. Authentication, explicit
+review/chat revisions, bounded event queues, and reconnect/snapshot recovery remain application
+responsibilities. Closing a connection or event subscription must not terminate a review or agent
+turn; interruption is an explicit command. Rust wire models will generate client bindings without
+requiring Protobuf or a gRPC-Web translation layer.
+
 ### Stack
 
 | Layer | Current implementation | Target |
@@ -133,6 +147,44 @@ version upgrade on load. Drafts, submitted receipts, and chat snapshots/active/r
 stored together. Rust-owned fixtures exercise this format without imposing a Node storage contract.
 HTTP startup, live chat restoration, write queues, and the 200 ms chat debounce are not ported in
 this slice; the executable still does not open state.
+
+The third slice adds a read-only session registry and synchronous session service. The service
+requires explicit expected revisions, rejects stale/backwards revisions, and prevents draft
+changes to archived/deleting reviews. It saves before changing registry ownership and returns a
+lifecycle event only after success. Metadata removal retains ownership if the disk operation fails;
+the caller remains responsible for safe worktree cleanup first. Loading validates and recovers the
+entire record set before exposing any state, without rewriting files or starting agents.
+
+Chat recovery clears live-turn hints, marks interrupted turns/running tools failed, preserves
+partial tool output and usage, and makes a saved active request the retry request. A missing active
+request never invents a retry or treats an older failed request as the interrupted turn. Changed
+snapshots increment their chat revision once; overflow/unsafe-integer revisions fail initialization.
+Explicit flush checkpoints recovered records, attempts every write, and reports all failures.
+The runtime must claim singleton ownership before opening state and run the synchronous service
+on a blocking owner. Production HTTP startup, event delivery, live agents, and streaming debounce
+remain later slices; the executable is still informational only.
+
+The fourth slice adds a read-only Axum HTTP application over the recovered session service. Its
+caller supplies the preflight report; constructing the application never opens state, probes tools,
+starts agents, checkpoints recovery, or binds a port. A separate listener helper rejects external
+addresses. Application readiness starts gated, and all requests receive 503 while starting or
+stopping. The executable still supports only help/version; production singleton ownership and
+graceful shutdown are not implemented by this application state.
+
+The browser auth exchange takes a bounded JSON bootstrap token and returns a distinct per-instance
+HttpOnly/SameSite=Strict cookie. Every API read, including health and auth status, requires that
+cookie. Validate local Host and same-origin Origin, require an Origin for mutations and WebSocket
+upgrades, and reject duplicate credential/Host/Origin headers. Do not accept bootstrap or MCP
+bearer tokens as browser credentials. Return no-store/security headers and structured JSON errors,
+including for malformed requests and unknown/unsupported routes; never echo auth input.
+
+Read routes expose health, preflight, session list/detail, comments, and chat snapshots only.
+Session list/detail establish the current revision. Comments/chat require an explicit safe
+`X-Legible-Review-Revision` (400 if missing/invalid, 409 if stale) rather than assuming revision 0.
+Archived/deleting records remain readable without allowing mutations. Return only recovered chat
+snapshots, not internal active/retry requests; absent chats are unavailable and never launch an
+agent. The service is immutable in this slice: move mutations to a serialized blocking owner when
+adding command/event integration. Rust static UI serving and `/api/events` remain unimplemented.
 
 ### Startup and CLI lifecycle
 
@@ -664,7 +716,7 @@ navigation, daemon connection, and authentication must not be embedded in the di
 
 Expose a small UI-side connection interface for authenticated requests, event subscriptions,
 reconnect/snapshot recovery, and navigation. The current browser implementation uses same-origin
-HTTP/WebSocket and URL-fragment bootstrap authentication. A desktop host can initially use the
+HTTP/WebSocket and URL-fragment bootstrap authentication. A desktop host uses the
 same daemon API, but WebView-specific APIs must remain in its host adapter. Do not make the
 React review components depend on a particular desktop framework.
 
@@ -823,7 +875,9 @@ remain outside this increment; no model invocation or MCP expansion is involved.
   exchanged for a separate HttpOnly/SameSite=Strict cookie. All user APIs and WebSocket upgrades
   require authentication and local Host/Origin checks. Missing mutation/WS origins are rejected.
   Agent MCP retains separate session-bound bearer auth. Never log tokens, cookies, or auth bodies.
-- Design the daemon API to be **network-transparent** (WebSocket + token). A Unix-socket-only design has to be torn out when one UI needs to attach to daemons on several machines.
+- Keep the authenticated HTTP/JSON and WebSocket contract **network-transparent**, including over
+  SSH tunnels. The Unix control socket serves local ownership/status/connection handoff, not a
+  second review API.
 - The browser's URL-fragment-to-cookie exchange is a browser entry flow, not the only client
   authentication mechanism. Desktop and editor hosts may obtain daemon access through a private
   local control channel, but must not expose the bootstrap secret to embedded WebView code.

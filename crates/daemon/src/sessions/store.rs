@@ -13,7 +13,7 @@ use serde_json::Value;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 
 const CURRENT_VERSION: u8 = 1;
-const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+pub(super) const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 
 /// An interrupted request is data only: loading it never starts an agent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -112,6 +112,9 @@ impl PersistedSessionRecord {
         if let Some(chat) = &self.chat {
             if chat.snapshot.session_id != self.session.id {
                 return Err("chat snapshot does not match session");
+            }
+            if chat.snapshot.revision > MAX_SAFE_INTEGER {
+                return Err("invalid chat revision");
             }
         }
         Ok(())

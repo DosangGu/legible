@@ -253,6 +253,7 @@ fn rejects_invalid_archival_revision_and_request_metadata() {
         ("/session/config/main/backend", json!("other")),
         ("/chat/snapshot/sessionId", json!("different-session")),
         ("/chat/snapshot/status", json!("unknown")),
+        ("/chat/snapshot/revision", json!(9_007_199_254_740_992_u64)),
         ("/chat/active/kind", json!("unknown")),
         ("/chat/active/message", Value::Null),
         ("/chat/retry", Value::Null),
