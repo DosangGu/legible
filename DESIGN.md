@@ -136,17 +136,17 @@ Add Cargo checks to CI alongside the existing npm checks as soon as the first Ru
 dependency versions in the workspace configuration. Build output belongs in Cargo's `target/`;
 frontend output remains in its workspace's `dist/`.
 
-The first migration slice establishes the root Cargo workspace, Rust wire models, shared
-TypeScript/Rust JSON fixtures, and both CI check paths. The daemon crate currently provides only
-an informational executable (`--help` / `--version`); HTTP serving and lifecycle remain on the
-Node baseline. The TypeScript contract remains authoritative until schema generation is added.
+The first migration slice established the root Cargo workspace, Rust wire models, shared
+TypeScript/Rust JSON fixtures, and both CI check paths. The daemon crate initially provided only
+an informational executable (`--help` / `--version`); HTTP serving and lifecycle remained on the
+Node baseline at this stage. The TypeScript contract remains authoritative until schema generation is added.
 
 The second slice adds a Rust session-store library with one current format (`version: 1`) and an
 explicit review revision, including 0 for a new review. There is no Node-format conversion or
 version upgrade on load. Drafts, submitted receipts, and chat snapshots/active/retry requests are
 stored together. Rust-owned fixtures exercise this format without imposing a Node storage contract.
-HTTP startup, live chat restoration, write queues, and the 200 ms chat debounce are not ported in
-this slice; the executable still does not open state.
+HTTP startup, live chat restoration, write queues, and the 200 ms chat debounce were not ported in
+that slice; the executable did not open state yet.
 
 The third slice adds a read-only session registry and synchronous session service. The service
 requires explicit expected revisions, rejects stale/backwards revisions, and prevents draft
@@ -162,14 +162,14 @@ snapshots increment their chat revision once; overflow/unsafe-integer revisions 
 Explicit flush checkpoints recovered records, attempts every write, and reports all failures.
 The runtime must claim singleton ownership before opening state and run the synchronous service
 on a blocking owner. Production HTTP startup, event delivery, live agents, and streaming debounce
-remain later slices; the executable is still informational only.
+were deferred to later slices; the executable remained informational at that stage.
 
 The fourth slice adds a read-only Axum HTTP application over the recovered session service. Its
 caller supplies the preflight report; constructing the application never opens state, probes tools,
 starts agents, checkpoints recovery, or binds a port. A separate listener helper rejects external
 addresses. Application readiness starts gated, and all requests receive 503 while starting or
-stopping. The executable still supports only help/version; production singleton ownership and
-graceful shutdown are not implemented by this application state.
+stopping. At this stage the executable supported only help/version; production singleton ownership
+and graceful shutdown were not implemented by this application state.
 
 The browser auth exchange takes a bounded JSON bootstrap token and returns a distinct per-instance
 HttpOnly/SameSite=Strict cookie. Every API read, including health and auth status, requires that
@@ -208,9 +208,40 @@ silently continuing. Incoming application text/binary frames close with 1008; tr
 and close acknowledgements are supported. Bound incoming frames/messages to 64 KiB and every
 socket write/control reply to five seconds. Leaving `ready` closes existing streams with 1001;
 new upgrades receive the same 503 readiness response as HTTP. Disconnecting clients drops only
-their subscriptions, never session ownership or agent state. The binary remains informational:
-production startup/singleton/shutdown, HTTP commands, static UI serving, and live agents are
-subsequent slices.
+their subscriptions, never session ownership or agent state. The sixth slice below connects this
+application to a foreground runtime; HTTP commands, static UI serving, and live agents remain later
+slices.
+
+The sixth slice provides `legible-daemon serve [--state-dir PATH] [--port PORT]` on Linux, macOS,
+and WSL, plus private `status/connect/stop` commands. It does not yet detach/start/attach, open a
+browser, serve static UI, probe vendor tools, or run agents. Unimplemented tool checks are explicitly
+degraded rather than fabricated as ready. The foreground command registers SIGINT/SIGTERM before
+startup and uses the same shutdown path as control stop.
+
+Claim the HTTP listener first, then a private retained advisory lock (`daemon.lock`) and control
+socket before loading records. The lock closes simultaneous-start/stale-reclamation races across
+different ports. Never unlink a lock file: replacing its inode can split ownership. Existing state
+directories must be current-user-owned 0700 directories with safe parents; do not chmod contributor
+directories to make them acceptable. Reject symlink/non-regular/foreign lock targets and
+unsafe/non-socket/foreign control targets. Only a refused connection to an unchanged private owned
+socket proves it stale; live or timed-out probes are never reclaimed. Cleanup checks the owned
+socket identity again and leaves replacements untouched.
+
+Load and recover on the blocking owner while transports remain gated. The loader retains pinned
+listener descriptors and the directory lock through cancelled startup. All records must initialize
+successfully before the explicit startup checkpoint and `ready` transition. Failed initialization
+never checkpoints partially restored state. Stop atomically closes owner admission; control stop
+refuses queued/executing state mutations, while signals drain accepted work. Checkpoint and join the
+owner before dropping listener guards. Report stop persistence/cleanup errors after resources close.
+Future asynchronous Git/agent work must participate in the same activity/stop boundary.
+
+The Rust control protocol is independent of historical Node wire formats: strict version-1 JSON
+frames use `status/connect/stop`, a current instance ID for connect/stop, and tagged
+`status/connected/stopped/error` responses. Limit frames to 16 KiB, concurrent connections to 32,
+and normal reads/writes to two seconds. Client stop waits are bounded at 30 seconds without a forced
+kill. Validate same-user socket metadata and peer credentials on both sides. Only explicit connect
+responses carry a bootstrap token; status and daemon logs remain secret-free. A missing or
+incompatible daemon is not automatically started or replaced by these control commands.
 
 ### Startup and CLI lifecycle
 

@@ -20,7 +20,7 @@ use axum::{
 use legible_protocol::{
     ChatSnapshot, ChatStatus, DaemonHealth, DraftComment, PreflightReport, ReviewSession,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::{net::TcpListener, sync::watch};
 
 use crate::{
@@ -46,7 +46,8 @@ const CONTENT_SECURITY_POLICY: &str = concat!(
     "form-action 'self'",
 );
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum DaemonPhase {
     Starting,
     Ready,
@@ -72,14 +73,20 @@ impl ApiState {
         access: BrowserAccess,
     ) -> io::Result<Self> {
         let owner = DaemonState::start(sessions, preflight)?;
+
+        Ok(Self::from_owner(owner, access))
+    }
+
+    /// Runtime entry point: reads stay gated while the supplied owner initializes off-thread.
+    pub fn from_owner(owner: DaemonState, access: BrowserAccess) -> Self {
         let (phase, _) = watch::channel(DaemonPhase::Starting);
 
-        Ok(Self(Arc::new(InnerState {
+        Self(Arc::new(InnerState {
             owner,
             access,
             started_at: Instant::now(),
             phase,
-        })))
+        }))
     }
 
     /// Readiness is explicit; constructing a router never claims that startup has completed.
@@ -96,7 +103,7 @@ impl ApiState {
     }
 }
 
-/// Safe listener boundary for a future runtime. It does not initialize or checkpoint state.
+/// Loopback-only listener boundary. Binding does not initialize or checkpoint state.
 pub async fn bind_loopback(address: SocketAddr) -> io::Result<TcpListener> {
     if !address.ip().is_loopback() {
         return Err(io::Error::new(

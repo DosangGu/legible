@@ -11,13 +11,13 @@ desktop window on an SSH host. A future VS Code extension can use the same daemo
 client; it will not embed a second review engine. Direct browser access remains supported in the
 target architecture: every client uses the same HTTP/JSON API and WebSocket event contract.
 The Cargo workspace, shared Rust wire models, session storage/registry/recovery, serialized state
-owner, and authenticated HTTP/WebSocket application are implemented as libraries. Production
-daemon startup, HTTP mutations, agent execution, and the desktop shell have not been ported yet.
+owner, authenticated HTTP/WebSocket application, and foreground Rust runtime are implemented.
+HTTP mutations, real tool preflight, agent execution, and the desktop shell have not been ported yet.
 The current npm package runs the Node implementation.
 
-The root Cargo workspace contains `crates/protocol` and the `crates/daemon` library/scaffold. The desktop
+The root Cargo workspace contains `crates/protocol` and the `crates/daemon` library/binary. The desktop
 shell will join it later. The React UI and future VS Code extension keep npm tooling. Cargo and
-npm coexist in the repository; the Node daemon remains the runnable application during migration.
+npm coexist in the repository; the Node daemon remains the complete review application during migration.
 
 Legible has not been released. The Rust rewrite does not preserve old Node storage formats or
 provide backward-compatibility layers; protocols and storage may change with the current clients
@@ -55,8 +55,30 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo run -p legible-daemon -- --version
 ```
 
-The Rust daemon binary currently supports only `--help` and `--version`. It does not listen on
-a port or access saved sessions. Continue using the npm commands below to run a review.
+The Rust binary supports foreground `serve` and private `status`, `connect`, and `stop` commands
+on Linux, macOS, and WSL. To test the read API with an isolated development state directory:
+
+```bash
+# Keep this running in one terminal; --port 0 avoids the Node daemon's default port.
+cargo run -p legible-daemon -- serve --state-dir /tmp/legible-rust-dev --port 0
+
+# Run these in another terminal with the same state directory:
+cargo run -p legible-daemon -- status --state-dir /tmp/legible-rust-dev
+cargo run -p legible-daemon -- connect --state-dir /tmp/legible-rust-dev
+cargo run -p legible-daemon -- stop --state-dir /tmp/legible-rust-dev
+```
+
+The default listener is `127.0.0.1:7777`. State defaults to `$XDG_STATE_HOME/legible` or
+`$HOME/.local/state/legible`. Existing directories must be owned by the current user with 0700
+permissions; startup does not change their permissions. Never point rewrite experiments at your
+existing review state. There is no Node-format conversion or deletion on startup.
+
+Status prints secret-free JSON. Connect explicitly prints the current bootstrap token to stdout;
+exchange it via `POST /api/auth` to obtain the browser cookie. The daemon itself never prints or
+persists this token. It does not open a browser or spawn a detached process. Static UI serving,
+repository/session command routes, real tool checks, and live agents remain future work, so
+preflight explicitly reports degraded/unimplemented checks. Continue using the npm commands below
+for a complete review.
 
 Rust and TypeScript tests share `packages/protocol/fixtures/wire.json`. The fixture source in
 `packages/protocol/src/testing/wire-fixtures.ts` is type-checked against the current TypeScript
@@ -78,15 +100,14 @@ Adds/replacements/removals finish on disk before changing registry ownership or 
 lifecycle event. Callers pass the expected review revision; draft updates reject archived/deleting
 reviews. Interrupted chats become failed without starting an agent, keep retry requests and partial
 tool output, and clear live-turn hints. An explicit `flush()` checkpoints recovery for the next
-restart and reports every failed save. These are library operations only: production HTTP startup,
-the live chat loop, and the 200 ms streaming-write scheduler are still unimplemented in Rust.
+restart and reports every failed save. HTTP mutations, the live chat loop, and the 200 ms
+streaming-write scheduler are still unimplemented in Rust.
 
 `crates/daemon/src/api` provides HTTP reads and a read-only WebSocket event stream. It does not open
 state, probe tools, checkpoint recovery, or start agents. The caller supplies a loaded session
 service and preflight report, and explicitly changes readiness from `starting` to `ready`.
-Starting/stopping applications
-return 503 with `Retry-After`. A listener helper rejects non-loopback addresses; production singleton
-ownership and graceful shutdown are still future work.
+Starting/stopping applications return 503 with `Retry-After`. The foreground runtime supplies the
+state owner and controls readiness; a listener helper rejects non-loopback addresses.
 
 The application supports `POST /api/auth`, `GET /api/auth`, `/api/health`, `/api/preflight`,
 `/api/sessions`, `/api/sessions/:id`, `/api/sessions/:id/comments`, and `/api/sessions/:id/chat`.
@@ -97,8 +118,7 @@ reads require an explicit `X-Legible-Review-Revision`; malformed/missing values 
 stale revisions return 409. Archived/deleting records remain readable. Chat responses expose only
 the recovered snapshot, never internal active/retry requests; missing snapshots are unavailable
 without starting an agent. Static UI serving and HTTP mutation routes are not implemented yet.
-The executable remains informational; HTTP/WebSocket tests use temporary state and real loopback
-connections.
+HTTP/WebSocket and child-process runtime tests use temporary state and real loopback connections.
 
 `DaemonState` owns the synchronous service on one dedicated thread. HTTP reads and internal
 mutations use a bounded command queue; events are published only after successful persistence.
@@ -111,6 +131,22 @@ connections close with 1013 instead of skipping changes. Text/binary commands cl
 ping/pong and close acknowledgements remain supported, and leaving `ready` closes existing
 connections with 1001. Socket writes have a five-second deadline. Client disconnects never remove
 sessions or cancel already-queued mutations; checkpoints remain explicit.
+
+The foreground runtime claims the HTTP port, a private retained `daemon.lock` advisory lock, and
+`daemon.sock` before loading any records. The extra lock serializes simultaneous starts on different
+ports and stale-socket reclamation; it is never unlinked. Only a verified stale socket owned by the
+current user may be removed. Live sockets, regular files, symlinks, unsafe parents, and replaced
+socket identities are left untouched. Control frames are strict, versioned JSON, limited to 16 KiB,
+with bounded reads/writes and same-user peer credentials. Connect/stop require the current instance
+ID. The blocking loader retains an ownership lease even if startup is cancelled. After all records
+validate and recover, an explicit checkpoint completes before readiness becomes `ready`.
+
+Control stop refuses accepted/executing state mutations. Signals drain accepted work. Both seal
+owner admission, checkpoint, join the owner, and close transports while listener guards remain
+pinned. Control stop reports persistence/cleanup errors only after releasing resources; it never
+kills by PID. SIGINT/SIGTERM use the same path. Git/agent activity leases must be added when those
+asynchronous operations are ported. The client waits at most 30 seconds for stop, without forced
+termination on timeout.
 
 ## Open a review
 

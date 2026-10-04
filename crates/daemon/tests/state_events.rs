@@ -369,3 +369,65 @@ async fn dropping_all_owner_handles_closes_the_event_channel() {
         Err(tokio::sync::broadcast::error::RecvError::Closed)
     ));
 }
+
+#[tokio::test]
+async fn shutdown_seals_admission_checkpoints_memory_and_closes_subscriptions_before_replying() {
+    let fixture = Fixture::new();
+    fixture.state.add(common::record(0)).await.unwrap();
+    let mut subscription = fixture.state.subscribe().await.unwrap();
+    let mut outside = common::record(0);
+    outside.session.comments.clear();
+    fixture.store.save(&outside).unwrap();
+
+    let ticket = fixture.state.try_begin_shutdown().await.unwrap();
+    assert!(matches!(
+        fixture.state.add(common::record(1)).await,
+        Err(StateError::Stopped)
+    ));
+    ticket.finish().await.unwrap();
+
+    assert_eq!(fixture.store.load_all().unwrap(), vec![common::record(0)]);
+    assert!(matches!(
+        subscription.events.recv().await,
+        Err(tokio::sync::broadcast::error::RecvError::Closed)
+    ));
+    assert!(matches!(
+        fixture.state.sessions().await,
+        Err(StateError::Stopped)
+    ));
+}
+
+#[tokio::test]
+async fn failed_shutdown_checkpoint_still_joins_the_owner_and_preserves_failed_records() {
+    let fixture = Fixture::new();
+    fixture.state.add(common::record(0)).await.unwrap();
+    let mut subscription = fixture.state.subscribe().await.unwrap();
+    let path = fixture.store.path_for("draft-review").unwrap();
+    let backup = fixture._root.path().join("saved-record.bak");
+    fs::rename(&path, &backup).unwrap();
+    fs::create_dir(&path).unwrap();
+
+    let ticket = fixture.state.begin_shutdown(true).await.unwrap();
+    let result = ticket.finish().await;
+
+    assert!(matches!(
+        result,
+        Err(StateError::Session(SessionError::Flush(_)))
+    ));
+    assert!(path.is_dir());
+    assert_eq!(
+        serde_json::from_slice::<legible_daemon::sessions::PersistedSessionRecord>(
+            &fs::read(backup).unwrap()
+        )
+        .unwrap(),
+        common::record(0)
+    );
+    assert!(matches!(
+        subscription.events.recv().await,
+        Err(tokio::sync::broadcast::error::RecvError::Closed)
+    ));
+    assert!(matches!(
+        fixture.state.preflight().await,
+        Err(StateError::Stopped)
+    ));
+}

@@ -1,8 +1,11 @@
-//! Rust daemon domain services and HTTP/WebSocket application. The binary does not start them yet.
+//! Rust daemon domain services, authenticated transports, and foreground runtime.
 
 pub mod api;
 pub mod sessions;
 pub mod state;
+
+#[cfg(unix)]
+pub mod runtime;
 
 pub use legible_protocol as protocol;
 

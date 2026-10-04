@@ -17,6 +17,7 @@ futures-util = { version = "0.3", features = ["sink"] }
 getrandom = { version = "0.3", features = ["std"] }
 legible-protocol = { path = "crates/protocol" }
 libc = "0.2"
+rustix = { version = "1", features = ["fs", "process"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 subtle = "2"
@@ -28,6 +29,8 @@ tokio = { version = "1", features = [
     "io-util",
     "sync",
     "time",
+    "signal",
+    "process",
 ] }
 tokio-tungstenite = "0.29"
 tower = { version = "0.5", features = ["util"] }
