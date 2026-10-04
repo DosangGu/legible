@@ -36,14 +36,20 @@ For Rust, rustfmt owns formatting; use `snake_case` for functions and fields and
 Apply these rules to both Rust and TypeScript. Keep formatter checks passing, but do not rely on
 automatic formatting alone to make code readable.
 
-- Separate logical steps with blank lines, especially setup, validation, state changes, and results.
+- Keep related statements together. Insert a single blank line when the responsibility changes
+  between declarations/setup, validation, transformation, state changes/side effects, and
+  return/result construction, including Rust's final expression.
+- Group statements by their purpose, not merely their syntax. Do not insert blank lines after
+  every declaration or call, collect all declarations at the top, or force every function into
+  the same sequence of stages. Keep declarations near their use.
 - Split long literals and complex expressions across lines. Use named intermediate values instead
   of embedding long builder chains or multiple operations inside another call.
 - Keep each function focused on one cohesive responsibility. Extract meaningful operations and
   repeated logic into clearly named functions; do not split functions solely to meet a line count.
 - Prefer guard clauses and straightforward control flow over deeply nested conditionals or closures.
 - Share repeated test setup and request/response handling, while keeping scenario-specific inputs
-  and assertions visible in each test. Do not fragment obvious one-step operations into helpers.
+  and assertions visible in each test. Separate setup, action, and assertions with blank lines.
+  Do not fragment obvious one-step operations into helpers.
 
 ## Testing Guidelines
 
